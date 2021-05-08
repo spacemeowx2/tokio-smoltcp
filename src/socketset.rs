@@ -57,8 +57,7 @@ impl SocketSet {
     fn alloc_tcp_socket(&self) -> socket::TcpSocket<'static> {
         let rx_buffer = TcpSocketBuffer::new(vec![0; self.buffer_size.tcp_rx_size]);
         let tx_buffer = TcpSocketBuffer::new(vec![0; self.buffer_size.tcp_tx_size]);
-        let mut tcp = TcpSocket::new(rx_buffer, tx_buffer);
-        tcp.listen(0).unwrap();
+        let tcp = TcpSocket::new(rx_buffer, tx_buffer);
 
         tcp
     }

@@ -1,6 +1,6 @@
 use futures::{
     future::{select, BoxFuture, Either},
-    Sink, Stream, StreamExt,
+    FutureExt, Sink, SinkExt, Stream, StreamExt,
 };
 use smoltcp::{
     phy::{Device, DeviceCapabilities, RxToken, TxToken},
@@ -8,6 +8,7 @@ use smoltcp::{
 };
 use std::{io, time::Duration};
 
+pub const MAX_BURST_SIZE: usize = 100;
 pub type Packet = Vec<u8>;
 pub trait Interface:
     Stream<Item = Packet> + Sink<Packet, Error = io::Error> + Send + Unpin
@@ -51,6 +52,17 @@ where
         let mut buffer = vec![0u8; len];
         let result = f(&mut buffer);
 
+        println!("send {}", buffer.len());
+        self.0
+            .stream
+            .send(buffer)
+            .now_or_never()
+            .ok_or(smoltcp::Error::Exhausted)?
+            .map_err(|e| {
+                eprintln!("Send stream failed {:?}", e);
+                smoltcp::Error::Exhausted
+            })?;
+
         result
     }
 }
@@ -64,8 +76,13 @@ where
     type TxToken = FutureTxToken<'a, S>;
 
     fn receive(&'a mut self) -> Option<(Self::RxToken, Self::TxToken)> {
-        self.get_next()
-            .map(move |p| (FutureRxToken(p), FutureTxToken(self)))
+        match self
+            .get_next()
+            .or_else(|| self.stream.next().now_or_never().flatten())
+        {
+            Some(p) => Some((FutureRxToken(p), FutureTxToken(self))),
+            None => None,
+        }
     }
 
     fn transmit(&'a mut self) -> Option<Self::TxToken> {

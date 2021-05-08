@@ -43,6 +43,21 @@ impl Base {
     fn lock_set(&self) -> std::sync::MutexGuard<'_, SocketSet> {
         self.reactor.lock_set()
     }
+    async fn connect(
+        &mut self,
+        local_endpoint: IpEndpoint,
+        remote_endpoint: IpEndpoint,
+    ) -> io::Result<()> {
+        {
+            let mut set = self.lock_set();
+            let mut socket = set.get::<socket::TcpSocket>(self.handle);
+            socket
+                .connect(remote_endpoint, local_endpoint)
+                .map_err(map_err)?;
+        }
+        self.writable(|_socket: &mut SocketRef<socket::TcpSocket>| Some(Ok(())))
+            .await
+    }
     fn accept<F>(&mut self, f: F) -> Base
     where
         F: FnOnce(&mut SocketSet) -> SocketHandle,
@@ -210,8 +225,25 @@ fn ep2sa(ep: &IpEndpoint) -> SocketAddr {
 }
 
 impl TcpSocket {
+    pub(super) async fn connect(
+        reactor: Arc<Reactor>,
+        local_endpoint: IpEndpoint,
+        remote_endpoint: IpEndpoint,
+    ) -> io::Result<TcpSocket> {
+        let mut base = Base::new(reactor, SocketSet::new_tcp_socket);
+        base.connect(local_endpoint, remote_endpoint).await?;
+        let local_addr = ep2sa(&local_endpoint);
+        let peer_addr = ep2sa(&remote_endpoint);
+        Ok(TcpSocket {
+            base,
+            local_addr,
+            peer_addr,
+        })
+    }
+
     fn new(listener_base: &mut Base) -> TcpSocket {
         let base = listener_base.accept(SocketSet::new_tcp_socket);
+        // TODO: set to listen here
 
         let mut set = base.lock_set();
         let socket = set.get::<socket::TcpSocket>(base.handle);

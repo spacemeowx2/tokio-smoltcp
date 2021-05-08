@@ -11,7 +11,7 @@ mod tokio {
         pin::Pin,
         task::{Context, Poll},
     };
-    use tokio_crate::io::unix::AsyncFd;
+    use tokio_crate::io::{unix::AsyncFd, Interest};
 
     pin_project! {
         pub struct AsyncCapture<T, R, S> {
@@ -30,7 +30,7 @@ mod tokio {
         S: Fn(&mut T, &[u8]) -> io::Result<()>,
     {
         pub fn new(obj: T, recv: R, send: S) -> io::Result<Self> {
-            let async_fd = AsyncFd::new(obj.as_raw_fd())?;
+            let async_fd = AsyncFd::with_interest(obj.as_raw_fd(), Interest::READABLE)?;
             Ok(AsyncCapture {
                 obj,
                 recv,

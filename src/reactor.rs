@@ -141,11 +141,10 @@ async fn run<S: device::Interface + 'static>(
 
 impl Reactor {
     pub fn new<S: device::Interface + 'static>(
-        device: FutureDevice<S>,
+        interf: Interface<'static, FutureDevice<S>>,
     ) -> (Self, impl Future<Output = ()> + Send) {
         let socketset = Arc::new(Mutex::new(SocketSet::new(Default::default())));
         let sources = Arc::new(Mutex::new(HashMap::new()));
-        let interf = InterfaceBuilder::new(device).finalize();
         let (notify, rx) = mpsc::unbounded();
         let fut = run(interf, socketset.clone(), sources.clone(), rx);
 

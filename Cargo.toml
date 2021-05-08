@@ -26,8 +26,9 @@ pcap = "0.8.1"
 structopt = "0.3"
 
 [features]
-default = [ "proto-ipv4", "tokio", "raw_socket" ]
+default = [ "proto-ipv4", "proto-ipv6", "tokio", "raw_socket" ]
 proto-ipv4 = [ "smoltcp/proto-ipv4" ]
+proto-ipv6 = [ "smoltcp/proto-ipv6" ]
 tokio = [ "pin-project-lite", "tokio_crate" ]
 raw_socket = [ "smoltcp/socket-raw" ]
 
