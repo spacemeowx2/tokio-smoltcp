@@ -1,32 +1,31 @@
 use super::{
-    reactor::Source,
-    NetReactor,
+    reactor::{Reactor, Source},
     SocketSet,
 };
-pub use smoltcp::socket::{self, SocketHandle, SocketRef, TcpState, AnySocket};
-use std::sync::Mutex;
-use futures::{future::poll_fn, pin_mut};
+pub use smoltcp::socket::{self, AnySocket, SocketHandle, SocketRef, TcpState};
+use smoltcp::wire::{IpAddress, IpEndpoint};
+use std::net::{IpAddr, Ipv4Addr};
 
+use futures::{ready, Stream};
 use std::{
+    future::Future,
+    mem::replace,
+    net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    mem::replace,
-    future::Future,
-    net::SocketAddr,
 };
 use tokio::io::{self, AsyncRead, AsyncWrite};
-use futures::{ready, Stream};
 
 #[derive(Clone)]
 struct Base {
     handle: SocketHandle,
-    reactor: Arc<NetReactor>,
+    reactor: Arc<Reactor>,
     source: Arc<Source>,
 }
 
 impl Base {
-    fn new<F>(reactor: Arc<NetReactor>, f: F) -> Base
+    fn new<F>(reactor: Arc<Reactor>, f: F) -> Base
     where
         F: FnOnce(&mut SocketSet) -> SocketHandle,
     {
@@ -62,7 +61,7 @@ impl Base {
     }
     async fn writable<T, F, R>(&self, mut f: F) -> io::Result<R>
     where
-        T: AnySocket<'static, 'static>,
+        T: AnySocket<'static>,
         F: FnMut(&mut SocketRef<T>) -> Option<io::Result<R>>,
     {
         loop {
@@ -74,12 +73,12 @@ impl Base {
                     None => (),
                 };
             }
-            self.source.writable(&self.reactor).await?;
+            self.source.writable().await?;
         }
     }
     async fn readable<T, F, R>(&self, mut f: F) -> io::Result<R>
     where
-        T: AnySocket<'static, 'static>,
+        T: AnySocket<'static>,
         F: FnMut(&mut SocketRef<T>) -> Option<io::Result<R>>,
     {
         loop {
@@ -91,7 +90,7 @@ impl Base {
                     None => (),
                 };
             }
-            self.source.readable(&self.reactor).await?;
+            self.source.readable().await?;
         }
     }
 }
@@ -123,19 +122,21 @@ fn map_err(e: smoltcp::Error) -> io::Error {
 }
 
 impl TcpListener {
-    pub(super) async fn new(reactor: Arc<NetReactor>) -> TcpListener {
+    pub(super) async fn new(reactor: Arc<Reactor>) -> TcpListener {
         TcpListener {
             base: Base::new(reactor, SocketSet::new_tcp_socket),
         }
     }
     pub async fn accept(&mut self) -> io::Result<TcpSocket> {
-        self.base.writable(|socket: &mut SocketRef<socket::TcpSocket>| {
-            if socket.can_send() {
-                drop(socket);
-                return Some(Ok(()))
-            }
-            None
-        }).await?;
+        self.base
+            .writable(|socket: &mut SocketRef<socket::TcpSocket>| {
+                if socket.can_send() {
+                    drop(socket);
+                    return Some(Ok(()));
+                }
+                None
+            })
+            .await?;
         Ok(TcpSocket::new(&mut self.base))
     }
     pub fn incoming(self) -> Incoming {
@@ -147,10 +148,7 @@ pub struct Incoming(TcpListener);
 
 impl Stream for Incoming {
     type Item = TcpSocket;
-    fn poll_next(
-        mut self: Pin<&mut Self>,
-        cx: &mut Context<'_>,
-    ) -> Poll<Option<Self::Item>> {
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let fut = self.0.accept();
         futures::pin_mut!(fut);
         let r = ready!(fut.poll(cx));
@@ -158,71 +156,56 @@ impl Stream for Incoming {
     }
 }
 
-pub struct SendHalf {
-    inner: Arc<Mutex<UdpSocket>>,
-}
-pub struct RecvHalf {
-    inner: Arc<Mutex<UdpSocket>>,
-}
-
-impl SendHalf {
-    pub async fn send(&mut self, data: &OwnedUdp) -> io::Result<()> {
-        poll_fn(move |cx| {
-            let mut inner = self.inner.lock().unwrap();
-            let fut = inner.send(data);
-            pin_mut!(fut);
-            fut.poll(cx)
-        }).await
-    }
-}
-
-impl RecvHalf {
-    pub async fn recv(&mut self) -> io::Result<OwnedUdp> {
-        poll_fn(|cx| {
-            let mut inner = self.inner.lock().unwrap();
-            let fut = inner.recv();
-            pin_mut!(fut);
-            fut.poll(cx)
-        }).await
-    }
-}
-
 impl UdpSocket {
-    pub(super) async fn new(reactor: Arc<NetReactor>) -> UdpSocket {
+    pub(super) async fn new(reactor: Arc<Reactor>) -> UdpSocket {
         UdpSocket {
-            base: Base::new(reactor, SocketSet::new_raw_socket)
+            base: Base::new(reactor, SocketSet::new_raw_socket),
         }
     }
-    pub async fn recv(&mut self) -> io::Result<OwnedUdp> {
-        self.base.readable(|socket: &mut SocketRef<socket::RawSocket>| {
-            if socket.can_recv() {
-                return Some(socket
-                    .recv()
-                    .map(|p| parse_udp_owned(p, &ChecksumCapabilities::default()))
-                    .and_then(|x| x)
-                    .map_err(map_err));
-            }
-            None
-        }).await
-    }
-    pub async fn send(&mut self, data: &OwnedUdp) -> io::Result<()> {
-        self.base.writable(|socket: &mut SocketRef<socket::RawSocket>| {
-            if socket.can_send() {
-                let r = socket.send_slice(&data.to_raw())
-                    .map_err(map_err);
-                self.base.reactor.notify();
-                return Some(r);
-            }
-            None
-        }).await
-    }
-    pub fn split(self) -> (SendHalf, RecvHalf) {
-        let inner = Arc::new(Mutex::new(self));
-        (SendHalf {
-            inner: inner.clone(),
-        }, RecvHalf {
-            inner,
-        })
+    // pub async fn recv(&mut self) -> io::Result<OwnedUdp> {
+    //     self.base
+    //         .readable(|socket: &mut SocketRef<socket::RawSocket>| {
+    //             if socket.can_recv() {
+    //                 return Some(
+    //                     socket
+    //                         .recv()
+    //                         .map(|p| parse_udp_owned(p, &ChecksumCapabilities::default()))
+    //                         .and_then(|x| x)
+    //                         .map_err(map_err),
+    //                 );
+    //             }
+    //             None
+    //         })
+    //         .await
+    // }
+    // pub async fn send(&mut self, data: &OwnedUdp) -> io::Result<()> {
+    //     self.base
+    //         .writable(|socket: &mut SocketRef<socket::RawSocket>| {
+    //             if socket.can_send() {
+    //                 let r = socket.send_slice(&data.to_raw()).map_err(map_err);
+    //                 self.base.reactor.notify();
+    //                 return Some(r);
+    //             }
+    //             None
+    //         })
+    //         .await
+    // }
+    // pub fn split(self) -> (SendHalf, RecvHalf) {
+    //     let inner = Arc::new(Mutex::new(self));
+    //     (
+    //         SendHalf {
+    //             inner: inner.clone(),
+    //         },
+    //         RecvHalf { inner },
+    //     )
+    // }
+}
+
+fn ep2sa(ep: &IpEndpoint) -> SocketAddr {
+    match ep.addr {
+        IpAddress::Ipv4(v4) => SocketAddr::new(IpAddr::V4(Ipv4Addr::from(v4)), ep.port),
+        // IpAddress::Ipv6(v6) => SocketAddr::new(IpAddr::V4(Ipv6Addr::from(v6)), ep.port),
+        _ => unreachable!(),
     }
 }
 
@@ -233,8 +216,8 @@ impl TcpSocket {
         let mut set = base.lock_set();
         let socket = set.get::<socket::TcpSocket>(base.handle);
 
-        let local_addr = endpoint2socketaddr(&socket.local_endpoint());
-        let peer_addr = endpoint2socketaddr(&socket.remote_endpoint());
+        let local_addr = ep2sa(&socket.local_endpoint());
+        let peer_addr = ep2sa(&socket.remote_endpoint());
         drop(socket);
         drop(set);
 
@@ -251,33 +234,34 @@ impl TcpSocket {
         Ok(self.peer_addr)
     }
     pub async fn recv(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.base.readable(|socket: &mut SocketRef<socket::TcpSocket>| {
-            if socket.state() != TcpState::Established {
-                socket.close();
-                return Some(Ok(0))
-            }
-            if socket.can_recv() {
-                return Some(socket
-                    .recv_slice(buf)
-                    .map_err(map_err));
-            }
-            None
-        }).await
+        self.base
+            .readable(|socket: &mut SocketRef<socket::TcpSocket>| {
+                if socket.state() != TcpState::Established {
+                    socket.close();
+                    return Some(Ok(0));
+                }
+                if socket.can_recv() {
+                    return Some(socket.recv_slice(buf).map_err(map_err));
+                }
+                None
+            })
+            .await
     }
     pub async fn send(&mut self, data: &[u8]) -> io::Result<usize> {
-        self.base.writable(|socket: &mut SocketRef<socket::TcpSocket>| {
-            if socket.state() != TcpState::Established {
-                socket.close();
-                return Some(Ok(0))
-            }
-            if socket.can_send() {
-                let r = socket.send_slice(data)
-                    .map_err(map_err);
-                self.base.reactor.notify();
-                return Some(r);
-            }
-            None
-        }).await
+        self.base
+            .writable(|socket: &mut SocketRef<socket::TcpSocket>| {
+                if socket.state() != TcpState::Established {
+                    socket.close();
+                    return Some(Ok(0));
+                }
+                if socket.can_send() {
+                    let r = socket.send_slice(data).map_err(map_err);
+                    self.base.reactor.notify();
+                    return Some(r);
+                }
+                None
+            })
+            .await
     }
     pub async fn shutdown(&mut self) -> io::Result<()> {
         let mut set = self.base.lock_set();
@@ -316,7 +300,10 @@ impl AsyncWrite for TcpSocket {
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         Poll::Ready(Ok(()))
     }
-    fn poll_shutdown(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+    fn poll_shutdown(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Result<(), io::Error>> {
         let fut = self.shutdown();
         futures::pin_mut!(fut);
         fut.poll(cx)

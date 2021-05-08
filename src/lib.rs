@@ -7,17 +7,33 @@ mod socket;
 mod socketset;
 pub mod util;
 
-use self::socketset::SocketSet;
+use std::sync::Arc;
+
 use device::FutureDevice;
-use futures::{channel::mpsc, future::select, pin_mut, StreamExt};
-use smoltcp::{
-    iface::{Interface, InterfaceBuilder},
-    socket::{SocketHandle, TcpState},
-    time::{Duration, Instant},
-};
-use std::{
-    collections::HashMap,
-    future::Future,
-    sync::{Arc, Mutex},
-    task::Waker,
-};
+use futures::Future;
+use reactor::Reactor;
+use socket::{TcpListener, TcpSocket};
+
+use self::socketset::SocketSet;
+
+pub struct Net {
+    reactor: Arc<Reactor>,
+}
+
+impl Net {
+    pub fn new<S: device::Interface + 'static>(
+        device: FutureDevice<S>,
+    ) -> (Net, impl Future<Output = ()> + Send) {
+        let (reactor, fut) = Reactor::new(device);
+
+        (
+            Net {
+                reactor: Arc::new(reactor),
+            },
+            fut,
+        )
+    }
+    pub async fn tcp_bind(&self) {
+        TcpListener::new(self.reactor.clone()).await;
+    }
+}

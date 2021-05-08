@@ -9,8 +9,14 @@ use smoltcp::{
 use std::{io, time::Duration};
 
 pub type Packet = Vec<u8>;
-pub trait Interface: Stream<Item = Packet> + Sink<Packet, Error = io::Error> + Unpin {}
-impl<T> Interface for T where T: Stream<Item = Packet> + Sink<Packet, Error = io::Error> + Unpin {}
+pub trait Interface:
+    Stream<Item = Packet> + Sink<Packet, Error = io::Error> + Send + Unpin
+{
+}
+impl<T> Interface for T where
+    T: Stream<Item = Packet> + Sink<Packet, Error = io::Error> + Send + Unpin
+{
+}
 
 pub struct FutureDevice<S> {
     caps: DeviceCapabilities,

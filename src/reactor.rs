@@ -1,6 +1,10 @@
 use crate::device::{self, FutureDevice};
 use crate::socketset::SocketSet;
-use futures::{channel::mpsc, future::select, pin_mut, StreamExt};
+use futures::{
+    channel::mpsc,
+    future::{self, select},
+    pin_mut, FutureExt, SinkExt, StreamExt,
+};
 use smoltcp::{
     iface::{Interface, InterfaceBuilder},
     socket::{SocketHandle, TcpState},
@@ -9,11 +13,12 @@ use smoltcp::{
 use std::{
     collections::HashMap,
     future::Future,
-    sync::{Arc, Mutex},
-    task::Waker,
+    io,
+    sync::{Arc, Mutex, MutexGuard},
+    task::{Poll, Waker},
 };
 
-pub struct Net {
+pub struct Reactor {
     socketset: Arc<Mutex<SocketSet>>,
     sources: Arc<Mutex<HashMap<SocketHandle, Arc<Source>>>>,
     notify: mpsc::UnboundedSender<()>,
@@ -26,6 +31,47 @@ pub struct Wakers {
 
 pub(crate) struct Source {
     wakers: Mutex<Wakers>,
+}
+
+impl Source {
+    pub async fn readable(&self) -> io::Result<()> {
+        let mut polled = false;
+
+        future::poll_fn(|cx| {
+            if polled {
+                Poll::Ready(Ok(()))
+            } else {
+                let mut wakers = self.wakers.lock().unwrap();
+
+                if wakers.readers.iter().all(|w| !w.will_wake(cx.waker())) {
+                    wakers.readers.push(cx.waker().clone());
+                }
+
+                polled = true;
+                Poll::Pending
+            }
+        })
+        .await
+    }
+    pub async fn writable(&self) -> io::Result<()> {
+        let mut polled = false;
+
+        future::poll_fn(|cx| {
+            if polled {
+                Poll::Ready(Ok(()))
+            } else {
+                let mut wakers = self.wakers.lock().unwrap();
+
+                if wakers.writers.iter().all(|w| !w.will_wake(cx.waker())) {
+                    wakers.writers.push(cx.waker().clone());
+                }
+
+                polled = true;
+                Poll::Pending
+            }
+        })
+        .await
+    }
 }
 
 async fn run<S: device::Interface + 'static>(
@@ -93,10 +139,10 @@ async fn run<S: device::Interface + 'static>(
     }
 }
 
-impl Net {
+impl Reactor {
     pub fn new<S: device::Interface + 'static>(
         device: FutureDevice<S>,
-    ) -> (Self, impl Future<Output = ()>) {
+    ) -> (Self, impl Future<Output = ()> + Send) {
         let socketset = Arc::new(Mutex::new(SocketSet::new(Default::default())));
         let sources = Arc::new(Mutex::new(HashMap::new()));
         let interf = InterfaceBuilder::new(device).finalize();
@@ -104,13 +150,42 @@ impl Net {
         let fut = run(interf, socketset.clone(), sources.clone(), rx);
 
         (
-            Net {
+            Reactor {
                 socketset,
                 sources,
                 notify,
             },
             fut,
         )
+    }
+    pub fn lock_set(&self) -> MutexGuard<'_, SocketSet> {
+        self.socketset.lock().unwrap()
+    }
+    pub(crate) fn insert(&self, handle: SocketHandle) -> Arc<Source> {
+        let mut sources = self.sources.lock().unwrap();
+        let source = Arc::new(Source {
+            wakers: Mutex::new(Wakers {
+                readers: Vec::new(),
+                writers: Vec::new(),
+            }),
+        });
+
+        sources.insert(handle, source.clone());
+
+        source
+    }
+    pub fn remove(&self, handle: &SocketHandle) {
+        let mut sources = self.sources.lock().unwrap();
+
+        sources.remove(handle);
+    }
+    pub fn notify(&self) {
+        self.notify
+            .clone()
+            .send(())
+            .now_or_never()
+            .unwrap()
+            .unwrap();
     }
 }
 
