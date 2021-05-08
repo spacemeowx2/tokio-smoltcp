@@ -52,7 +52,6 @@ where
         let mut buffer = vec![0u8; len];
         let result = f(&mut buffer);
 
-        println!("send {}", buffer.len());
         self.0
             .stream
             .send(buffer)

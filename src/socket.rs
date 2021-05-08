@@ -55,8 +55,14 @@ impl Base {
                 .connect(remote_endpoint, local_endpoint)
                 .map_err(map_err)?;
         }
-        self.writable(|_socket: &mut SocketRef<socket::TcpSocket>| Some(Ok(())))
-            .await
+        self.writable(|socket: &mut SocketRef<socket::TcpSocket>| {
+            if socket.state() == TcpState::Established {
+                Some(Ok(()))
+            } else {
+                None
+            }
+        })
+        .await
     }
     fn accept<F>(&mut self, f: F) -> Base
     where

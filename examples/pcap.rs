@@ -35,13 +35,10 @@ async fn async_main(opt: Opt) -> Result<()> {
         .open()
         .context("Failed to open device")?;
 
-    let mut async_cap = AsyncCapture::new(
+    let async_cap = AsyncCapture::new(
         cap.setnonblock().context("Failed to set nonblock")?,
         |d| d.next().map_err(map_err).map(|p| p.to_vec()),
-        |d, pkt| {
-            println!("send {}", pkt.len());
-            d.sendpacket(pkt).map_err(map_err)
-        },
+        |d, pkt| d.sendpacket(pkt).map_err(map_err),
     )
     .context("Failed to create async capture")?
     .take_while(|i| ready(i.is_ok()))
@@ -59,12 +56,15 @@ async fn async_main(opt: Opt) -> Result<()> {
     tokio::spawn(fut);
 
     let mut tcp = net.tcp_connect("39.156.69.79:80".parse()?).await?;
+    println!("Connected");
 
     tcp.write_all(b"GET / HTTP/1.1\r\nHost: www.baidu.com\r\n\r\n")
         .await?;
+    println!("Sent");
+
     let mut string = String::new();
     tcp.read_to_string(&mut string).await?;
-    println!("{}", string);
+    println!("read {}", string);
 
     Ok(())
 }
@@ -72,5 +72,8 @@ async fn async_main(opt: Opt) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let opt = Opt::from_args();
-    async_main(opt).await
+    if let Err(e) = async_main(opt).await {
+        eprintln!("Error {:?}", e);
+    }
+    Ok(())
 }
