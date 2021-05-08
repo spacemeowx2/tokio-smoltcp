@@ -6,7 +6,7 @@ use futures::{
     pin_mut, FutureExt, SinkExt, StreamExt,
 };
 use smoltcp::{
-    iface::{Interface, InterfaceBuilder},
+    iface::Interface,
     socket::{SocketHandle, TcpState},
     time::{Duration, Instant},
 };
@@ -91,6 +91,7 @@ async fn run<S: device::Interface + 'static>(
                 .unwrap_or(default_timeout)
         };
         let device = interf.device_mut();
+        device.send_queue().await.expect("Failed to send queue");
 
         if device.need_wait() {
             let wait = device.wait(deadline.into());
@@ -103,7 +104,7 @@ async fn run<S: device::Interface + 'static>(
             Ok(true) => (),
             // readiness not changed
             Ok(false) | Err(smoltcp::Error::Dropped) => continue,
-            Err(e) => {
+            Err(_e) => {
                 continue;
             }
         };

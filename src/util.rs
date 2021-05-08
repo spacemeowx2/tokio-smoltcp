@@ -20,6 +20,7 @@ mod tokio {
             send: S,
             async_fd: AsyncFd<RawFd>,
             temp: Option<Vec<u8>>,
+            poll_write: bool,
         }
     }
 
@@ -37,6 +38,7 @@ mod tokio {
                 send,
                 async_fd,
                 temp: None,
+                poll_write: false,
             })
         }
     }
@@ -75,9 +77,12 @@ mod tokio {
 
         fn poll_ready(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
             assert!(self.temp.is_none());
-            let this = self.project();
 
-            ready!(this.async_fd.poll_write_ready(cx))?.clear_ready();
+            if self.poll_write {
+                let this = self.project();
+
+                ready!(this.async_fd.poll_write_ready(cx))?.clear_ready();
+            }
 
             Poll::Ready(Ok(()))
         }
@@ -97,13 +102,17 @@ mod tokio {
         }
 
         fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+            if !self.poll_write {
+                // drop packet
+                return Poll::Ready(Ok(()));
+            }
             let mut this = self.project();
             if let Some(p) = &this.temp {
                 let obj = &mut this.obj;
                 let send = this.send;
 
                 loop {
-                    let mut guard = ready!(this.async_fd.poll_read_ready(cx))?;
+                    let mut guard = ready!(this.async_fd.poll_write_ready(cx))?;
                     match guard.try_io(|_| send(obj, &p)) {
                         Ok(result) => {
                             this.temp.take();

@@ -1,12 +1,12 @@
 use futures::{
     future::{select, BoxFuture, Either},
-    FutureExt, Sink, SinkExt, Stream, StreamExt,
+    stream, FutureExt, Sink, Stream, StreamExt,
 };
 use smoltcp::{
     phy::{Device, DeviceCapabilities, RxToken, TxToken},
     time::Instant,
 };
-use std::{io, time::Duration};
+use std::{collections::VecDeque, io, time::Duration};
 
 pub const MAX_BURST_SIZE: usize = 100;
 pub type Packet = Vec<u8>;
@@ -24,6 +24,7 @@ pub struct FutureDevice<S> {
     stream: S,
     sleep: Box<dyn Fn(Duration) -> BoxFuture<'static, ()> + Send + Sync>,
     temp: Option<Packet>,
+    send_queue: VecDeque<Packet>,
 }
 
 pub struct FutureRxToken(Packet);
@@ -52,15 +53,9 @@ where
         let mut buffer = vec![0u8; len];
         let result = f(&mut buffer);
 
-        self.0
-            .stream
-            .send(buffer)
-            .now_or_never()
-            .ok_or(smoltcp::Error::Exhausted)?
-            .map_err(|e| {
-                eprintln!("Send stream failed {:?}", e);
-                smoltcp::Error::Exhausted
-            })?;
+        if result.is_ok() {
+            self.0.send_queue.push_back(buffer);
+        }
 
         result
     }
@@ -85,7 +80,11 @@ where
     }
 
     fn transmit(&'a mut self) -> Option<Self::TxToken> {
-        Some(FutureTxToken(self))
+        if self.send_queue.len() < MAX_BURST_SIZE {
+            Some(FutureTxToken(self))
+        } else {
+            None
+        }
     }
 
     fn capabilities(&self) -> DeviceCapabilities {
@@ -109,6 +108,7 @@ where
             stream,
             sleep: Box::new(sleep),
             temp: None,
+            send_queue: VecDeque::new(),
         }
     }
     pub(crate) fn need_wait(&self) -> bool {
@@ -120,10 +120,16 @@ where
             Either::Right((v, _)) => v,
         };
     }
-    fn get_next(&mut self) -> Option<Packet> {
+    pub(crate) fn get_next(&mut self) -> Option<Packet> {
         if let Some(t) = self.temp.take() {
             return Some(t);
         }
         None
+    }
+    pub(crate) async fn send_queue(&mut self) -> io::Result<usize> {
+        let size = self.send_queue.len();
+        let stream = stream::iter(self.send_queue.drain(..).map(|i| Ok(i)));
+        stream.forward(&mut self.stream).await?;
+        Ok(size)
     }
 }

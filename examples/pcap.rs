@@ -2,7 +2,7 @@ extern crate tokio_crate as tokio;
 
 use anyhow::{anyhow, Context, Result};
 use async_smoltcp::{device::FutureDevice, util::AsyncCapture, Net, NetConfig};
-use futures::{FutureExt, SinkExt, StreamExt};
+use futures::{FutureExt, StreamExt};
 use pcap::{Capture, Device};
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr};
 use std::{future::ready, io};
@@ -55,6 +55,7 @@ async fn async_main(opt: Opt) -> Result<()> {
     );
     tokio::spawn(fut);
 
+    println!("Connecting");
     let mut tcp = net.tcp_connect("39.156.69.79:80".parse()?).await?;
     println!("Connected");
 
