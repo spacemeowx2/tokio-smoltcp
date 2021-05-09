@@ -274,7 +274,7 @@ impl TcpSocket {
     pub async fn recv(&mut self, buf: &mut [u8]) -> io::Result<usize> {
         self.base
             .readable(|socket: &mut SocketRef<socket::TcpSocket>| {
-                if socket.state() != TcpState::Established {
+                if !socket.may_recv() {
                     socket.close();
                     return Some(Ok(0));
                 }
@@ -288,7 +288,7 @@ impl TcpSocket {
     pub async fn send(&mut self, data: &[u8]) -> io::Result<usize> {
         self.base
             .writable(|socket: &mut SocketRef<socket::TcpSocket>| {
-                if socket.state() != TcpState::Established {
+                if !socket.may_send() {
                     socket.close();
                     return Some(Ok(0));
                 }
