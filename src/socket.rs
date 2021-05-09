@@ -9,13 +9,13 @@ use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use futures::{ready, Stream};
 use std::{
     future::Future,
+    io,
     mem::replace,
     net::SocketAddr,
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
 };
-use tokio::io::{self, AsyncRead, AsyncWrite};
 
 #[derive(Clone)]
 struct Base {
@@ -309,11 +309,44 @@ impl TcpSocket {
     }
 }
 
-impl AsyncRead for TcpSocket {
+impl futures::io::AsyncRead for TcpSocket {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut io::ReadBuf<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<usize>> {
+        let fut = self.recv(buf);
+        futures::pin_mut!(fut);
+        fut.poll(cx)
+    }
+}
+
+impl futures::io::AsyncWrite for TcpSocket {
+    fn poll_write(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+    ) -> Poll<Result<usize, io::Error>> {
+        let fut = self.send(buf);
+        futures::pin_mut!(fut);
+        fut.poll(cx)
+    }
+    fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        Poll::Ready(Ok(()))
+    }
+    fn poll_close(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+        let fut = self.shutdown();
+        futures::pin_mut!(fut);
+        fut.poll(cx)
+    }
+}
+
+#[cfg(feature = "tokio")]
+impl tokio::io::AsyncRead for TcpSocket {
+    fn poll_read(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+        buf: &mut tokio::io::ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let set = {
             let fut = self.recv(buf.initialize_unfilled());
@@ -325,7 +358,8 @@ impl AsyncRead for TcpSocket {
     }
 }
 
-impl AsyncWrite for TcpSocket {
+#[cfg(feature = "tokio")]
+impl tokio::io::AsyncWrite for TcpSocket {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
