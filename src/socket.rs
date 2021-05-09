@@ -320,7 +320,7 @@ impl AsyncRead for TcpSocket {
             futures::pin_mut!(fut);
             futures::ready!(fut.poll(cx))?
         };
-        buf.set_filled(set);
+        buf.advance(set);
         Poll::Ready(Ok(()))
     }
 }

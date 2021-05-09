@@ -63,7 +63,7 @@ impl Net {
             Net {
                 reactor: Arc::new(reactor),
                 ip_addr: config.ip_addr,
-                from_port: AtomicU16::new(50000),
+                from_port: AtomicU16::new(10020),
             },
             fut,
         )
@@ -71,7 +71,7 @@ impl Net {
     fn get_port(&self) -> u16 {
         self.from_port
             .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |x| {
-                Some(if x > 20000 { 10000 } else { x + 1 })
+                Some(if x > 60000 { 10000 } else { x + 1 })
             })
             .unwrap()
     }
