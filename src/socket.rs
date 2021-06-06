@@ -1,7 +1,9 @@
 use super::{reactor::Reactor, socket_alloctor::SocketHandle};
-use futures::{future, ready};
+use futures::future::{self, poll_fn};
+use futures::{ready, Stream};
 pub use smoltcp::socket::{self, AnySocket, SocketRef, TcpState};
 use smoltcp::wire::{IpAddress, IpEndpoint};
+use std::mem::replace;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::{
     io,
@@ -12,97 +14,68 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
-// async fn connect(
-//     &mut self,
-//     local_endpoint: IpEndpoint,
-//     remote_endpoint: IpEndpoint,
-// ) -> io::Result<()> {
-//     {
-//         let mut set = self.lock_set();
-//         let mut socket = set.get::<socket::TcpSocket>(self.handle);
-//         socket
-//             .connect(remote_endpoint, local_endpoint)
-//             .map_err(map_err)?;
-//     }
-//     self.writable(|socket: &mut SocketRef<socket::TcpSocket>| {
-//         if socket.state() == TcpState::Established {
-//             Some(Ok(()))
-//         } else {
-//             None
-//         }
-//     })
-//     .await
-// }
-// fn accept<F>(&mut self, f: F) -> Base
-// where
-//     F: FnOnce(&mut SocketSet) -> SocketHandle,
-// {
-//     let reactor = self.reactor.clone();
-//     let mut set = reactor.lock_set();
-//     let handle = f(&mut set);
-//     drop(set);
-
-//     Base {
-//         reactor,
-//         handle: replace(&mut self.handle, handle),
-//     }
-// }
-// fn poll_write<T, F, R>(&self, mut f: F) -> Poll<io::Result<R>>
-// where
-//     T: AnySocket<'static>,
-//     F: FnMut(&mut SocketRef<T>) -> Option<io::Result<R>>,
-// {
-//     let mut set = self.lock_set();
-//     let mut socket = set.get::<T>(self.handle);
-//     match f(&mut socket) {
-//         Some(r) => Poll::Ready(r),
-//         None => Poll::Pending,
-//     }
-// }
-// }
-
-// pub struct TcpListener {
-//     base: Base,
-// }
+pub struct TcpListener {
+    handle: SocketHandle,
+    reactor: Arc<Reactor>,
+    local_addr: SocketAddr,
+}
 
 fn map_err(e: smoltcp::Error) -> io::Error {
     io::Error::new(io::ErrorKind::Other, e.to_string())
 }
 
-// impl TcpListener {
-//     pub(super) async fn new(reactor: Arc<Reactor>) -> TcpListener {
-//         TcpListener {
-//             base: Base::new(reactor, SocketAlloctor::new_tcp_socket),
-//         }
-//     }
-//     // pub async fn accept(&mut self) -> io::Result<TcpSocket> {
-//     //     self.base
-//     //         .writable(|socket: &mut SocketRef<socket::TcpSocket>| {
-//     //             if socket.can_send() {
-//     //                 drop(socket);
-//     //                 return Some(Ok(()));
-//     //             }
-//     //             None
-//     //         })
-//     //         .await?;
-//     //     Ok(TcpSocket::new(&mut self.base))
-//     // }
-//     pub fn incoming(self) -> Incoming {
-//         Incoming(self)
-//     }
-// }
+impl TcpListener {
+    pub(super) async fn new(
+        reactor: Arc<Reactor>,
+        local_endpoint: IpEndpoint,
+    ) -> io::Result<TcpListener> {
+        let handle = reactor.socket_alloctor().new_tcp_socket();
+        {
+            let mut set = reactor.socket_alloctor().lock();
+            let mut socket = set.get::<socket::TcpSocket>(*handle);
+            socket.listen(local_endpoint).map_err(map_err)?;
+        }
 
-// pub struct Incoming(TcpListener);
+        let local_addr = ep2sa(&local_endpoint);
+        Ok(TcpListener {
+            handle,
+            reactor,
+            local_addr,
+        })
+    }
+    pub fn poll_accept(
+        &mut self,
+        cx: &mut Context<'_>,
+    ) -> Poll<io::Result<(TcpSocket, SocketAddr)>> {
+        let mut set = self.reactor.socket_alloctor().lock();
+        let mut socket = set.get::<socket::TcpSocket>(*self.handle);
 
-// impl Stream for Incoming {
-//     type Item = TcpSocket;
-//     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
-//         let fut = self.0.accept();
-//         futures::pin_mut!(fut);
-//         let r = ready!(fut.poll(cx));
-//         Poll::Ready(r.ok())
-//     }
-// }
+        if socket.state() == TcpState::Established {
+            drop(socket);
+            drop(set);
+            eprintln!("accepted ");
+            return Poll::Ready(Ok(TcpSocket::accept(self)?));
+        }
+        socket.register_send_waker(cx.waker());
+        Poll::Pending
+    }
+    pub async fn accept(&mut self) -> io::Result<(TcpSocket, SocketAddr)> {
+        poll_fn(|cx| self.poll_accept(cx)).await
+    }
+    pub fn incoming(self) -> Incoming {
+        Incoming(self)
+    }
+}
+
+pub struct Incoming(TcpListener);
+
+impl Stream for Incoming {
+    type Item = io::Result<TcpSocket>;
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
+        let (tcp, _) = ready!(self.0.poll_accept(cx))?;
+        Poll::Ready(Some(Ok(tcp)))
+    }
+}
 
 fn ep2sa(ep: &IpEndpoint) -> SocketAddr {
     match ep.addr {
@@ -148,24 +121,33 @@ impl TcpSocket {
         Ok(tcp)
     }
 
-    // fn new(listener_base: &mut Base) -> TcpSocket {
-    //     let base = listener_base.accept(SocketSet::new_tcp_socket);
-    //     // TODO: set to listen here
+    fn accept(listener: &mut TcpListener) -> io::Result<(TcpSocket, SocketAddr)> {
+        let reactor = listener.reactor.clone();
+        let new_handle = reactor.socket_alloctor().new_tcp_socket();
+        let mut set = reactor.socket_alloctor().lock();
+        {
+            let mut new_socket = set.get::<socket::TcpSocket>(*new_handle);
+            new_socket.listen(listener.local_addr).map_err(map_err)?;
+        }
+        let (peer_addr, local_addr) = {
+            let socket = set.get::<socket::TcpSocket>(*listener.handle);
+            (
+                ep2sa(&socket.remote_endpoint()),
+                ep2sa(&socket.local_endpoint()),
+            )
+        };
 
-    //     let mut set = base.lock_set();
-    //     let socket = set.get::<socket::TcpSocket>(base.handle);
+        Ok((
+            TcpSocket {
+                handle: replace(&mut listener.handle, new_handle),
+                reactor: reactor.clone(),
+                local_addr,
+                peer_addr,
+            },
+            peer_addr,
+        ))
+    }
 
-    //     let local_addr = ep2sa(&socket.local_endpoint());
-    //     let peer_addr = ep2sa(&socket.remote_endpoint());
-    //     drop(socket);
-    //     drop(set);
-
-    //     TcpSocket {
-    //         base,
-    //         local_addr,
-    //         peer_addr,
-    //     }
-    // }
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         Ok(self.local_addr)
     }

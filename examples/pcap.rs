@@ -4,7 +4,7 @@ use pcap::{Capture, Device};
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr};
 use std::{future::ready, io};
 use structopt::StructOpt;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{copy, split, AsyncReadExt, AsyncWriteExt};
 use tokio_smoltcp::{device::FutureDevice, util::AsyncCapture, Net, NetConfig};
 
 #[derive(Debug, StructOpt)]
@@ -35,8 +35,16 @@ async fn async_main(opt: Opt) -> Result<()> {
 
     let async_cap = AsyncCapture::new(
         cap.setnonblock().context("Failed to set nonblock")?,
-        |d| d.next().map_err(map_err).map(|p| p.to_vec()),
-        |d, pkt| d.sendpacket(pkt).map_err(map_err),
+        |d| {
+            let r = d.next().map_err(map_err).map(|p| p.to_vec());
+            // eprintln!("recv {:?}", r);
+            r
+        },
+        |d, pkt| {
+            let r = d.sendpacket(pkt).map_err(map_err);
+            // eprintln!("send {:?}", r);
+            r
+        },
     )
     .context("Failed to create async capture")?
     .take_while(|i| ready(i.is_ok()))
@@ -57,7 +65,7 @@ async fn async_main(opt: Opt) -> Result<()> {
     let mut tcp = net.tcp_connect("39.156.69.79:80".parse()?).await?;
     println!("Connected");
 
-    tcp.write_all(b"GET / HTTP/1.1\r\nHost: www.baidu.com\r\n\r\n")
+    tcp.write_all(b"GET / HTTP/1.0\r\nHost: www.baidu.com\r\n\r\n")
         .await?;
     println!("Sent");
 
@@ -65,7 +73,17 @@ async fn async_main(opt: Opt) -> Result<()> {
     tcp.read_to_string(&mut string).await?;
     println!("read {}", string);
 
-    Ok(())
+    let mut listener = net.tcp_bind("0.0.0.0:12345".parse()?).await?;
+    loop {
+        let (tcp, addr) = listener.accept().await?;
+        println!("Accept from {:?}", addr);
+        tokio::spawn(async move {
+            let (mut tx, mut rx) = split(tcp);
+            copy(&mut tx, &mut rx).await.unwrap();
+        });
+    }
+
+    // Ok(())
 }
 
 #[tokio::main]

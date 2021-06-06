@@ -15,7 +15,7 @@ use smoltcp::{
     iface::{InterfaceBuilder, NeighborCache, Routes},
     wire::{EthernetAddress, IpAddress, IpCidr},
 };
-use socket::TcpSocket;
+use socket::{TcpListener, TcpSocket};
 
 pub mod device;
 mod reactor;
@@ -58,7 +58,7 @@ impl Net {
             Net {
                 reactor: Arc::new(reactor),
                 ip_addr: config.ip_addr,
-                from_port: AtomicU16::new(10000),
+                from_port: AtomicU16::new(10001),
             },
             fut,
         )
@@ -70,9 +70,9 @@ impl Net {
             })
             .unwrap()
     }
-    // pub async fn tcp_bind(&self) {
-    //     TcpListener::new(self.reactor.clone()).await;
-    // }
+    pub async fn tcp_bind(&self, addr: SocketAddr) -> io::Result<TcpListener> {
+        TcpListener::new(self.reactor.clone(), addr.into()).await
+    }
     pub async fn tcp_connect(&self, addr: SocketAddr) -> io::Result<TcpSocket> {
         TcpSocket::connect(
             self.reactor.clone(),
