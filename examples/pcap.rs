@@ -1,5 +1,5 @@
 use anyhow::{anyhow, Context, Result};
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use pcap::{Capture, Device};
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr};
 use std::{future::ready, io};
