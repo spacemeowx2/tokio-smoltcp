@@ -1,13 +1,9 @@
-use futures::{
-    future::{select, Either},
-    stream, FutureExt, Sink, Stream, StreamExt,
-};
+use futures::{stream, FutureExt, Sink, Stream, StreamExt};
 use smoltcp::{
     phy::{Device, DeviceCapabilities, RxToken, TxToken},
     time::Instant,
 };
-use std::{collections::VecDeque, io, time::Duration};
-use tokio::{pin, time::sleep};
+use std::{collections::VecDeque, io};
 
 pub const MAX_BURST_SIZE: usize = 100;
 pub type Packet = Vec<u8>;
@@ -109,13 +105,8 @@ where
     pub(crate) fn need_wait(&self) -> bool {
         self.temp.is_none()
     }
-    pub(crate) async fn wait(&mut self, timeout: Duration) {
-        let slp = sleep(timeout);
-        pin!(slp);
-        self.temp = match select(slp, self.stream.next()).await {
-            Either::Left(_) => return,
-            Either::Right((v, _)) => v,
-        };
+    pub(crate) async fn wait(&mut self) {
+        self.temp = self.stream.next().await;
     }
     pub(crate) fn get_next(&mut self) -> Option<Packet> {
         if let Some(t) = self.temp.take() {

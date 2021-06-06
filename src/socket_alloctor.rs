@@ -38,7 +38,7 @@ impl SocketAlloctor {
             set: Arc::new(Mutex::new(InnerSocketSet::new(vec![]))),
         }
     }
-    pub fn as_mut(&self) -> MutexGuard<InnerSocketSet<'static>> {
+    pub fn lock(&self) -> MutexGuard<InnerSocketSet<'static>> {
         self.set.lock().unwrap()
     }
     pub fn new_tcp_socket(&self) -> SocketHandle {

@@ -127,7 +127,7 @@ impl TcpSocket {
     ) -> io::Result<TcpSocket> {
         let handle = reactor.socket_alloctor().new_tcp_socket();
         {
-            let mut set = reactor.socket_alloctor().as_mut();
+            let mut set = reactor.socket_alloctor().lock();
             let mut socket = set.get::<socket::TcpSocket>(*handle);
             socket
                 .connect(remote_endpoint, local_endpoint)
@@ -172,34 +172,14 @@ impl TcpSocket {
     pub fn peer_addr(&self) -> io::Result<SocketAddr> {
         Ok(self.peer_addr)
     }
-    pub fn poll_read_ready(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut set = self.reactor.socket_alloctor().as_mut();
+    pub fn poll_connected(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        let mut set = self.reactor.socket_alloctor().lock();
         let mut socket = set.get::<socket::TcpSocket>(*self.handle);
-        if socket.can_recv() {
-            return Poll::Ready(Ok(()));
-        }
-        socket.register_recv_waker(cx.waker());
-        Poll::Pending
-    }
-    pub fn poll_write_ready(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut set = self.reactor.socket_alloctor().as_mut();
-        let mut socket = set.get::<socket::TcpSocket>(*self.handle);
-        if socket.can_send() {
+        if socket.state() == TcpState::Established {
             return Poll::Ready(Ok(()));
         }
         socket.register_send_waker(cx.waker());
         Poll::Pending
-    }
-    pub fn poll_connected(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut set = self.reactor.socket_alloctor().as_mut();
-        let mut socket = set.get::<socket::TcpSocket>(*self.handle);
-
-        loop {
-            ready!(self.poll_read_ready(cx))?;
-            if socket.state() == TcpState::Established {
-                return Poll::Ready(Ok(()));
-            }
-        }
     }
 }
 
@@ -209,21 +189,20 @@ impl AsyncRead for TcpSocket {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let mut set = self.reactor.socket_alloctor().as_mut();
+        let mut set = self.reactor.socket_alloctor().lock();
         let mut socket = set.get::<socket::TcpSocket>(*self.handle);
         if !socket.may_recv() {
             return Poll::Ready(Ok(()));
         }
-        loop {
-            ready!(self.poll_read_ready(cx))?;
-            if socket.can_recv() {
-                let read = socket
-                    .recv_slice(buf.initialize_unfilled())
-                    .map_err(map_err)?;
-                buf.advance(read);
-                return Poll::Ready(Ok(()));
-            }
+        if socket.can_recv() {
+            let read = socket
+                .recv_slice(buf.initialize_unfilled())
+                .map_err(map_err)?;
+            buf.advance(read);
+            return Poll::Ready(Ok(()));
         }
+        socket.register_recv_waker(cx.waker());
+        Poll::Pending
     }
 }
 
@@ -233,33 +212,31 @@ impl AsyncWrite for TcpSocket {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        let mut set = self.reactor.socket_alloctor().as_mut();
+        let mut set = self.reactor.socket_alloctor().lock();
         let mut socket = set.get::<socket::TcpSocket>(*self.handle);
         if !socket.may_send() {
             return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
         }
-        loop {
-            ready!(self.poll_write_ready(cx))?;
-            if socket.can_send() {
-                let r = socket.send_slice(buf).map_err(map_err)?;
-                self.reactor.notify();
-                return Poll::Ready(Ok(r));
-            }
+        if socket.can_send() {
+            let r = socket.send_slice(buf).map_err(map_err)?;
+            self.reactor.notify();
+            return Poll::Ready(Ok(r));
         }
+        socket.register_send_waker(cx.waker());
+        Poll::Pending
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        let mut set = self.reactor.socket_alloctor().as_mut();
-        let socket = set.get::<socket::TcpSocket>(*self.handle);
-        loop {
-            ready!(self.poll_write_ready(cx))?;
-            if socket.send_queue() == 0 {
-                return Poll::Ready(Ok(()));
-            }
+        let mut set = self.reactor.socket_alloctor().lock();
+        let mut socket = set.get::<socket::TcpSocket>(*self.handle);
+        if socket.send_queue() == 0 {
+            return Poll::Ready(Ok(()));
         }
+        socket.register_send_waker(cx.waker());
+        Poll::Pending
     }
     // TODO finish shutdown
     fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        let mut set = self.reactor.socket_alloctor().as_mut();
+        let mut set = self.reactor.socket_alloctor().lock();
         let mut socket = set.get::<socket::TcpSocket>(*self.handle);
         socket.close();
         Poll::Ready(Ok(()))
