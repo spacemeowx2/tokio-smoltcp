@@ -1,5 +1,5 @@
 [package]
-name = "async-smoltcp"
+name = "tokio-smoltcp"
 version = "0.1.0"
 authors = ["spacemeowx2 <spacemeowx2@gmail.com>"]
 edition = "2018"
