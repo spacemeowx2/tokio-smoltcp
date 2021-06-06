@@ -1,13 +1,11 @@
-extern crate tokio_crate as tokio;
-
 use anyhow::{anyhow, Context, Result};
-use async_smoltcp::{device::FutureDevice, util::AsyncCapture, Net, NetConfig};
 use futures::{FutureExt, StreamExt};
 use pcap::{Capture, Device};
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr};
 use std::{future::ready, io};
 use structopt::StructOpt;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio_smoltcp::{device::FutureDevice, util::AsyncCapture, Net, NetConfig};
 
 #[derive(Debug, StructOpt)]
 struct Opt {
@@ -44,7 +42,7 @@ async fn async_main(opt: Opt) -> Result<()> {
     .take_while(|i| ready(i.is_ok()))
     .map(|i| i.unwrap());
 
-    let device = FutureDevice::new(async_cap, 1500, |d| tokio::time::sleep(d).boxed());
+    let device = FutureDevice::new(async_cap, 1500);
     let (net, fut) = Net::new(
         device,
         NetConfig {

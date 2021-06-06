@@ -5,6 +5,7 @@ use super::{
 pub use smoltcp::socket::{self, AnySocket, SocketHandle, SocketRef, TcpState};
 use smoltcp::wire::{IpAddress, IpEndpoint};
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
+use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
 use futures::{ready, Stream};
 use std::{
@@ -341,12 +342,11 @@ impl futures::io::AsyncWrite for TcpSocket {
     }
 }
 
-#[cfg(feature = "tokio")]
-impl tokio::io::AsyncRead for TcpSocket {
+impl AsyncRead for TcpSocket {
     fn poll_read(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut tokio::io::ReadBuf<'_>,
+        buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
         let set = {
             let fut = self.recv(buf.initialize_unfilled());
@@ -358,8 +358,7 @@ impl tokio::io::AsyncRead for TcpSocket {
     }
 }
 
-#[cfg(feature = "tokio")]
-impl tokio::io::AsyncWrite for TcpSocket {
+impl AsyncWrite for TcpSocket {
     fn poll_write(
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,

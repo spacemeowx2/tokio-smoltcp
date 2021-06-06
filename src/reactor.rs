@@ -98,6 +98,7 @@ async fn run<S: device::Interface + 'static>(
             pin_mut!(wait);
             select(wait, notify.next()).await;
         }
+
         let mut set = sockets.lock().unwrap();
         let end = Instant::now();
         match interf.poll(set.as_set_mut(), end) {

@@ -1,5 +1,5 @@
 use futures::{
-    future::{select, BoxFuture, Either},
+    future::{select, Either},
     stream, FutureExt, Sink, Stream, StreamExt,
 };
 use smoltcp::{
@@ -7,6 +7,7 @@ use smoltcp::{
     time::Instant,
 };
 use std::{collections::VecDeque, io, time::Duration};
+use tokio::{pin, time::sleep};
 
 pub const MAX_BURST_SIZE: usize = 100;
 pub type Packet = Vec<u8>;
@@ -22,7 +23,6 @@ impl<T> Interface for T where
 pub struct FutureDevice<S> {
     caps: DeviceCapabilities,
     stream: S,
-    sleep: Box<dyn Fn(Duration) -> BoxFuture<'static, ()> + Send + Sync>,
     temp: Option<Packet>,
     send_queue: VecDeque<Packet>,
 }
@@ -96,17 +96,12 @@ impl<S> FutureDevice<S>
 where
     S: Interface,
 {
-    pub fn new(
-        stream: S,
-        mtu: usize,
-        sleep: impl (Fn(Duration) -> BoxFuture<'static, ()>) + Send + Sync + 'static,
-    ) -> FutureDevice<S> {
+    pub fn new(stream: S, mtu: usize) -> FutureDevice<S> {
         let mut caps = DeviceCapabilities::default();
         caps.max_transmission_unit = mtu;
         FutureDevice {
             caps,
             stream,
-            sleep: Box::new(sleep),
             temp: None,
             send_queue: VecDeque::new(),
         }
@@ -115,7 +110,9 @@ where
         self.temp.is_none()
     }
     pub(crate) async fn wait(&mut self, timeout: Duration) {
-        self.temp = match select((self.sleep)(timeout), self.stream.next()).await {
+        let slp = sleep(timeout);
+        pin!(slp);
+        self.temp = match select(slp, self.stream.next()).await {
             Either::Left(_) => return,
             Either::Right((v, _)) => v,
         };

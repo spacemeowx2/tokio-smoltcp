@@ -4,23 +4,21 @@ version = "0.1.0"
 authors = ["spacemeowx2 <spacemeowx2@gmail.com>"]
 edition = "2018"
 
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
 [dependencies]
 futures = "0.3"
-pin-project-lite = { version = "0.2.6", optional = true }
-tokio_crate = { version = "1.0", optional = true, package = "tokio" }
+pin-project-lite = "0.2.6"
+tokio = { version = "1.0", features = ["time"] }
 
 [dependencies.smoltcp]
 version = "0.7.0"
 default-features = false
 features = [ "std", "async", "medium-ethernet", "medium-ip", "socket-tcp" ]
+# remove git when 0.8.0 released
 git = "https://github.com/smoltcp-rs/smoltcp.git"
-rev = "09f941851ded868b759e7db067abd67f2fe136a6"
+rev = "7e62f6883b287e9a9dc4054c83c64811c3ace6b1"
 
 [dev-dependencies]
-# tokio = { version = "1.0", features = ["full"] }
-tokio_crate = { version = "1.0", features = ["full"], package = "tokio" }
+tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
 pcap = "0.8.1"
 structopt = "0.3"
@@ -29,9 +27,7 @@ structopt = "0.3"
 default = [ "proto-ipv4", "proto-ipv6", "raw_socket" ]
 proto-ipv4 = [ "smoltcp/proto-ipv4" ]
 proto-ipv6 = [ "smoltcp/proto-ipv6" ]
-tokio = [ "pin-project-lite", "tokio_crate" ]
 raw_socket = [ "smoltcp/socket-raw" ]
 
 [[example]]
 name = "pcap"
-required-features = ["tokio"]

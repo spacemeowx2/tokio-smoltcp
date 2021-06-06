@@ -1,12 +1,3 @@
-#[cfg(feature = "tokio_crate")]
-extern crate tokio_crate as tokio;
-
-pub mod device;
-mod reactor;
-mod socket;
-mod socketset;
-pub mod util;
-
 use std::{
     collections::BTreeMap,
     io,
@@ -27,6 +18,12 @@ use smoltcp::{
 use socket::{TcpListener, TcpSocket};
 
 use self::socketset::SocketSet;
+
+pub mod device;
+mod reactor;
+mod socket;
+mod socketset;
+pub mod util;
 
 pub struct NetConfig {
     pub ethernet_addr: EthernetAddress,
