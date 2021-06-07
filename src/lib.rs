@@ -15,7 +15,7 @@ use smoltcp::{
     iface::{EthernetInterfaceBuilder, NeighborCache, Routes},
     wire::{EthernetAddress, IpAddress, IpCidr},
 };
-use socket::{TcpListener, TcpSocket};
+pub use socket::{TcpListener, TcpSocket};
 
 pub mod device;
 mod reactor;
