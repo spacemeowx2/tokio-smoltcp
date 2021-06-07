@@ -3,5 +3,5 @@ mod unix;
 #[cfg(unix)]
 pub use unix::*;
 
-pub use blocking_capture::BlockingCapture;
-mod blocking_capture;
+pub use channel_capture::ChannelCapture;
+mod channel_capture;

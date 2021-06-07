@@ -1,39 +1,42 @@
 use anyhow::{anyhow, Context, Result};
-use futures::StreamExt;
 use pcap::{Capture, Device};
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr};
-use std::{future::ready, io};
 use structopt::StructOpt;
 use tokio::io::{copy, split, AsyncReadExt, AsyncWriteExt};
-use tokio_smoltcp::{device::FutureDevice, util::AsyncCapture, Net, NetConfig};
+use tokio_smoltcp::{
+    device::{FutureDevice, Interface},
+    Net, NetConfig,
+};
 
 #[derive(Debug, StructOpt)]
 struct Opt {
     device: String,
 }
 
-fn map_err(e: pcap::Error) -> io::Error {
-    match e {
-        pcap::Error::IoError(e) => e.into(),
-        pcap::Error::TimeoutExpired => io::ErrorKind::WouldBlock.into(),
-        other => io::Error::new(io::ErrorKind::Other, other),
-    }
-}
+#[cfg(unix)]
+fn get_by_device(device: Device) -> Result<impl Interface> {
+    use futures::StreamExt;
+    use std::future::ready;
+    use std::io;
+    use tokio_smoltcp::util::AsyncCapture;
 
-async fn async_main(opt: Opt) -> Result<()> {
-    let device = Device::list()?
-        .into_iter()
-        .find(|d| d.name == opt.device)
-        .ok_or(anyhow!("Device not found"))?;
-
-    let cap = Capture::from_device(device)
+    let cap = Capture::from_device(device.clone())
         .context("Failed to capture device")?
         .promisc(true)
         .immediate_mode(true)
+        .timeout(5)
         .open()
         .context("Failed to open device")?;
 
-    let async_cap = AsyncCapture::new(
+    fn map_err(e: pcap::Error) -> io::Error {
+        match e {
+            pcap::Error::IoError(e) => e.into(),
+            pcap::Error::TimeoutExpired => io::ErrorKind::WouldBlock.into(),
+            other => io::Error::new(io::ErrorKind::Other, other),
+        }
+    }
+
+    Ok(AsyncCapture::new(
         cap.setnonblock().context("Failed to set nonblock")?,
         |d| {
             let r = d.next().map_err(map_err).map(|p| p.to_vec());
@@ -48,9 +51,56 @@ async fn async_main(opt: Opt) -> Result<()> {
     )
     .context("Failed to create async capture")?
     .take_while(|i| ready(i.is_ok()))
-    .map(|i| i.unwrap());
+    .map(|i| i.unwrap()))
+}
 
-    let device = FutureDevice::new(async_cap, 1500);
+#[cfg(windows)]
+fn get_by_device(device: Device) -> Result<impl Interface> {
+    use tokio::sync::mpsc::{Receiver, Sender};
+    use tokio_smoltcp::util::ChannelCapture;
+
+    let mut cap = Capture::from_device(device.clone())
+        .context("Failed to capture device")?
+        .promisc(true)
+        .immediate_mode(true)
+        .timeout(5)
+        .open()
+        .context("Failed to open device")?;
+    let mut send = Capture::from_device(device)
+        .context("Failed to capture device")?
+        .promisc(true)
+        .immediate_mode(true)
+        .timeout(5)
+        .open()
+        .context("Failed to open device")?;
+
+    let recv = move |tx: Sender<Vec<u8>>| loop {
+        let p = match cap.next().map(|p| p.to_vec()) {
+            Ok(p) => p,
+            Err(pcap::Error::TimeoutExpired) => continue,
+            Err(e) => {
+                eprintln!("Error: {:?}", e);
+                break;
+            }
+        };
+        tx.blocking_send(p).unwrap();
+    };
+    let send = move |mut rx: Receiver<Vec<u8>>| {
+        while let Some(pkt) = rx.blocking_recv() {
+            send.sendpacket(pkt).unwrap();
+        }
+    };
+    let capture = ChannelCapture::new(recv, send);
+    Ok(capture)
+}
+
+async fn async_main(opt: Opt) -> Result<()> {
+    let device = Device::list()?
+        .into_iter()
+        .find(|d| d.name == opt.device)
+        .ok_or(anyhow!("Device not found"))?;
+
+    let device = FutureDevice::new(get_by_device(device)?, 1500);
     let (net, fut) = Net::new(
         device,
         NetConfig {
