@@ -6,19 +6,19 @@ use smoltcp::{
     time::{Duration, Instant},
 };
 use std::{future::Future, sync::Arc};
-use tokio::sync::Notify;
-use tokio::time::sleep;
-use tokio::{pin, select};
+use tokio::{pin, select, sync::Notify, time::sleep};
 
 pub struct Reactor {
     socket_alloctor: Arc<SocketAlloctor>,
     notify: Arc<Notify>,
+    stopper: Arc<Notify>,
 }
 
 async fn run<S: device::Interface + 'static>(
     mut interf: EthernetInterface<'static, FutureDevice<S>>,
     sockets: Arc<SocketAlloctor>,
     notify: Arc<Notify>,
+    stopper: Arc<Notify>,
 ) {
     let default_timeout = Duration::from_secs(60);
     let timer = sleep(default_timeout.into());
@@ -42,6 +42,7 @@ async fn run<S: device::Interface + 'static>(
                 _ = &mut timer => {},
                 _ = device.wait() => {}
                 _ = notify.notified() => {}
+                _ = stopper.notified() => break,
             };
         }
 
@@ -65,12 +66,19 @@ impl Reactor {
     ) -> (Self, impl Future<Output = ()> + Send) {
         let socket_alloctor = Arc::new(SocketAlloctor::new(buffer_size));
         let notify = Arc::new(Notify::new());
-        let fut = run(interf, socket_alloctor.clone(), notify.clone());
+        let stopper = Arc::new(Notify::new());
+        let fut = run(
+            interf,
+            socket_alloctor.clone(),
+            notify.clone(),
+            stopper.clone(),
+        );
 
         (
             Reactor {
                 socket_alloctor,
                 notify,
+                stopper,
             },
             fut,
         )
@@ -80,5 +88,11 @@ impl Reactor {
     }
     pub fn notify(&self) {
         self.notify.clone().notify_waiters();
+    }
+}
+
+impl Drop for Reactor {
+    fn drop(&mut self) {
+        self.stopper.notify_waiters();
     }
 }
