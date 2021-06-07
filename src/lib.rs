@@ -16,6 +16,7 @@ use smoltcp::{
     wire::{EthernetAddress, IpAddress, IpCidr},
 };
 pub use socket::{TcpListener, TcpSocket};
+pub use socket_alloctor::BufferSize;
 
 pub mod device;
 mod reactor;
@@ -27,6 +28,7 @@ pub struct NetConfig {
     pub ethernet_addr: EthernetAddress,
     pub ip_addr: IpCidr,
     pub gateway: IpAddress,
+    pub buffer_size: BufferSize,
 }
 
 pub struct Net {
@@ -52,7 +54,7 @@ impl Net {
             .ip_addrs(vec![config.ip_addr.clone()])
             .routes(routes)
             .finalize();
-        let (reactor, fut) = Reactor::new(interf);
+        let (reactor, fut) = Reactor::new(interf, config.buffer_size);
 
         (
             Net {

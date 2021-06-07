@@ -107,6 +107,7 @@ async fn async_main(opt: Opt) -> Result<()> {
             ethernet_addr: EthernetAddress::from_bytes(&[0x00, 0x01, 0x02, 0x03, 0x04, 0x05]),
             ip_addr: IpCidr::Ipv4(Ipv4Cidr::new(Ipv4Address::new(172, 19, 44, 33), 20)),
             gateway: IpAddress::Ipv4(Ipv4Address::new(172, 19, 32, 1)),
+            buffer_size: Default::default(),
         },
     );
     tokio::spawn(fut);

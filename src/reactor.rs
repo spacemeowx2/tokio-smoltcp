@@ -1,5 +1,6 @@
 use crate::device::{self, FutureDevice};
 use crate::socket_alloctor::SocketAlloctor;
+use crate::BufferSize;
 use smoltcp::{
     iface::EthernetInterface,
     time::{Duration, Instant},
@@ -60,8 +61,9 @@ async fn run<S: device::Interface + 'static>(
 impl Reactor {
     pub fn new<S: device::Interface + 'static>(
         interf: EthernetInterface<'static, FutureDevice<S>>,
+        buffer_size: BufferSize,
     ) -> (Self, impl Future<Output = ()> + Send) {
-        let socket_alloctor = Arc::new(SocketAlloctor::new(Default::default()));
+        let socket_alloctor = Arc::new(SocketAlloctor::new(buffer_size));
         let notify = Arc::new(Notify::new());
         let fut = run(interf, socket_alloctor.clone(), notify.clone());
 
