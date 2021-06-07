@@ -17,6 +17,7 @@ use smoltcp::{
 };
 pub use socket::{TcpListener, TcpSocket};
 pub use socket_alloctor::BufferSize;
+use tokio::sync::Notify;
 
 pub mod device;
 mod reactor;
@@ -35,6 +36,7 @@ pub struct Net {
     reactor: Arc<Reactor>,
     ip_addr: IpCidr,
     from_port: AtomicU16,
+    stopper: Arc<Notify>,
 }
 
 impl Net {
@@ -54,13 +56,15 @@ impl Net {
             .ip_addrs(vec![config.ip_addr.clone()])
             .routes(routes)
             .finalize();
-        let (reactor, fut) = Reactor::new(interf, config.buffer_size);
+        let stopper = Arc::new(Notify::new());
+        let (reactor, fut) = Reactor::new(interf, config.buffer_size, stopper.clone());
 
         (
             Net {
                 reactor: Arc::new(reactor),
                 ip_addr: config.ip_addr,
                 from_port: AtomicU16::new(10001),
+                stopper,
             },
             fut,
         )
@@ -82,5 +86,11 @@ impl Net {
             addr.into(),
         )
         .await
+    }
+}
+
+impl Drop for Net {
+    fn drop(&mut self) {
+        self.stopper.notify_waiters()
     }
 }

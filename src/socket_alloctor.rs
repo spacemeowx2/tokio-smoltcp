@@ -1,10 +1,6 @@
-use smoltcp::socket::{RawPacketMetadata, RawSocket, RawSocketBuffer};
-use smoltcp::{
-    socket::{
-        self, SocketHandle as InnerSocketHandle, SocketSet as InnerSocketSet, TcpSocket,
-        TcpSocketBuffer,
-    },
-    wire::{IpProtocol, IpVersion},
+use smoltcp::socket::{
+    self, SocketHandle as InnerSocketHandle, SocketSet as InnerSocketSet, TcpSocket,
+    TcpSocketBuffer,
 };
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -46,11 +42,11 @@ impl SocketAlloctor {
         let handle = set.add(self.alloc_tcp_socket());
         SocketHandle::new(handle, self.set.clone())
     }
-    pub fn new_raw_socket(&self) -> SocketHandle {
-        let mut set = self.set.lock().unwrap();
-        let handle = set.add(self.alloc_raw_socket());
-        SocketHandle::new(handle, self.set.clone())
-    }
+    // pub fn new_raw_socket(&self) -> SocketHandle {
+    //     let mut set = self.set.lock().unwrap();
+    //     let handle = set.add(self.alloc_raw_socket());
+    //     SocketHandle::new(handle, self.set.clone())
+    // }
     fn alloc_tcp_socket(&self) -> socket::TcpSocket<'static> {
         let rx_buffer = TcpSocketBuffer::new(vec![0; self.buffer_size.tcp_rx_size]);
         let tx_buffer = TcpSocketBuffer::new(vec![0; self.buffer_size.tcp_tx_size]);
@@ -58,19 +54,19 @@ impl SocketAlloctor {
 
         tcp
     }
-    fn alloc_raw_socket(&self) -> socket::RawSocket<'static> {
-        let rx_buffer = RawSocketBuffer::new(
-            vec![RawPacketMetadata::EMPTY; 32],
-            vec![0; self.buffer_size.raw_size],
-        );
-        let tx_buffer = RawSocketBuffer::new(
-            vec![RawPacketMetadata::EMPTY; 32],
-            vec![0; self.buffer_size.raw_size],
-        );
-        let raw = RawSocket::new(IpVersion::Ipv4, IpProtocol::Udp, rx_buffer, tx_buffer);
+    // fn alloc_raw_socket(&self) -> socket::RawSocket<'static> {
+    //     let rx_buffer = RawSocketBuffer::new(
+    //         vec![RawPacketMetadata::EMPTY; 32],
+    //         vec![0; self.buffer_size.raw_size],
+    //     );
+    //     let tx_buffer = RawSocketBuffer::new(
+    //         vec![RawPacketMetadata::EMPTY; 32],
+    //         vec![0; self.buffer_size.raw_size],
+    //     );
+    //     let raw = RawSocket::new(IpVersion::Ipv4, IpProtocol::Udp, rx_buffer, tx_buffer);
 
-        raw
-    }
+    //     raw
+    // }
 }
 
 pub struct SocketHandle(InnerSocketHandle, Arc<Mutex<InnerSocketSet<'static>>>);

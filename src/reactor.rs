@@ -11,7 +11,6 @@ use tokio::{pin, select, sync::Notify, time::sleep};
 pub struct Reactor {
     socket_alloctor: Arc<SocketAlloctor>,
     notify: Arc<Notify>,
-    stopper: Arc<Notify>,
 }
 
 async fn run<S: device::Interface + 'static>(
@@ -63,22 +62,16 @@ impl Reactor {
     pub fn new<S: device::Interface + 'static>(
         interf: EthernetInterface<'static, FutureDevice<S>>,
         buffer_size: BufferSize,
+        stopper: Arc<Notify>,
     ) -> (Self, impl Future<Output = ()> + Send) {
         let socket_alloctor = Arc::new(SocketAlloctor::new(buffer_size));
         let notify = Arc::new(Notify::new());
-        let stopper = Arc::new(Notify::new());
-        let fut = run(
-            interf,
-            socket_alloctor.clone(),
-            notify.clone(),
-            stopper.clone(),
-        );
+        let fut = run(interf, socket_alloctor.clone(), notify.clone(), stopper);
 
         (
             Reactor {
                 socket_alloctor,
                 notify,
-                stopper,
             },
             fut,
         )
@@ -88,11 +81,5 @@ impl Reactor {
     }
     pub fn notify(&self) {
         self.notify.clone().notify_waiters();
-    }
-}
-
-impl Drop for Reactor {
-    fn drop(&mut self) {
-        self.stopper.notify_waiters();
     }
 }
