@@ -17,7 +17,7 @@ impl<T> Interface for T where
 }
 
 pub struct FutureDevice<S> {
-    caps: DeviceCapabilities,
+    pub caps: DeviceCapabilities,
     stream: S,
     temp: Option<Packet>,
     send_queue: VecDeque<Packet>,
