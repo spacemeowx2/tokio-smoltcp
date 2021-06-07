@@ -13,10 +13,11 @@ tokio-util = "0.6.7"
 [dependencies.smoltcp]
 version = "0.7.0"
 default-features = false
-features = [ "std", "async", "medium-ethernet", "medium-ip", "socket-tcp" ]
+features = [ "std", "async", "socket-tcp", "ethernet" ]
+# "medium-ethernet", "medium-ip"
 # remove git when 0.8.0 released
-git = "https://github.com/smoltcp-rs/smoltcp.git"
-rev = "7e62f6883b287e9a9dc4054c83c64811c3ace6b1"
+# git = "https://github.com/smoltcp-rs/smoltcp.git"
+# rev = "7e62f6883b287e9a9dc4054c83c64811c3ace6b1"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }

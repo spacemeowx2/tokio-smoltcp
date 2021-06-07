@@ -12,7 +12,7 @@ use device::FutureDevice;
 use futures::Future;
 use reactor::Reactor;
 use smoltcp::{
-    iface::{InterfaceBuilder, NeighborCache, Routes},
+    iface::{EthernetInterfaceBuilder, NeighborCache, Routes},
     wire::{EthernetAddress, IpAddress, IpCidr},
 };
 use socket::{TcpListener, TcpSocket};
@@ -46,7 +46,7 @@ impl Net {
             _ => panic!("gateway should be set"),
         };
         let neighbor_cache = NeighborCache::new(BTreeMap::new());
-        let interf = InterfaceBuilder::new(device)
+        let interf = EthernetInterfaceBuilder::new(device)
             .ethernet_addr(config.ethernet_addr)
             .neighbor_cache(neighbor_cache)
             .ip_addrs(vec![config.ip_addr.clone()])

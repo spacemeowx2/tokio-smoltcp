@@ -1,7 +1,7 @@
 use crate::device::{self, FutureDevice};
 use crate::socket_alloctor::SocketAlloctor;
 use smoltcp::{
-    iface::Interface,
+    iface::EthernetInterface,
     time::{Duration, Instant},
 };
 use std::{future::Future, sync::Arc};
@@ -15,7 +15,7 @@ pub struct Reactor {
 }
 
 async fn run<S: device::Interface + 'static>(
-    mut interf: Interface<'static, FutureDevice<S>>,
+    mut interf: EthernetInterface<'static, FutureDevice<S>>,
     sockets: Arc<SocketAlloctor>,
     notify: Arc<Notify>,
 ) {
@@ -59,7 +59,7 @@ async fn run<S: device::Interface + 'static>(
 
 impl Reactor {
     pub fn new<S: device::Interface + 'static>(
-        interf: Interface<'static, FutureDevice<S>>,
+        interf: EthernetInterface<'static, FutureDevice<S>>,
     ) -> (Self, impl Future<Output = ()> + Send) {
         let socket_alloctor = Arc::new(SocketAlloctor::new(Default::default()));
         let notify = Arc::new(Notify::new());
