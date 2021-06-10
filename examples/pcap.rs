@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use pcap::{Capture, Device};
-use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr, Ipv4Address, Ipv4Cidr};
+use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
 use structopt::StructOpt;
 use tokio::io::{copy, split, AsyncReadExt, AsyncWriteExt};
 use tokio_smoltcp::{
@@ -11,6 +11,12 @@ use tokio_smoltcp::{
 #[derive(Debug, StructOpt)]
 struct Opt {
     device: String,
+    #[structopt(short, long, default_value = "00:01:02:03:04:05")]
+    ethernet_addr: String,
+    #[structopt(short, long, default_value = "172.19.44.33/20")]
+    ip_addr: String,
+    #[structopt(short, long, default_value = "172.19.32.1")]
+    gateway: String,
 }
 
 #[cfg(unix)]
@@ -99,14 +105,17 @@ async fn async_main(opt: Opt) -> Result<()> {
         .into_iter()
         .find(|d| d.name == opt.device)
         .ok_or(anyhow!("Device not found"))?;
+    let ethernet_addr: EthernetAddress = opt.ethernet_addr.parse().unwrap();
+    let ip_addr: IpCidr = opt.ip_addr.parse().unwrap();
+    let gateway: IpAddress = opt.gateway.parse().unwrap();
 
     let device = FutureDevice::new(get_by_device(device)?, 1500);
     let (net, fut) = Net::new(
         device,
         NetConfig {
-            ethernet_addr: EthernetAddress::from_bytes(&[0x00, 0x01, 0x02, 0x03, 0x04, 0x05]),
-            ip_addr: IpCidr::Ipv4(Ipv4Cidr::new(Ipv4Address::new(172, 19, 44, 33), 20)),
-            gateway: IpAddress::Ipv4(Ipv4Address::new(172, 19, 32, 1)),
+            ethernet_addr,
+            ip_addr,
+            gateway,
             buffer_size: Default::default(),
         },
     );
