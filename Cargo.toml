@@ -1,6 +1,6 @@
 [package]
 name = "tokio-smoltcp"
-version = "0.1.5"
+version = "0.1.6"
 authors = ["spacemeowx2 <spacemeowx2@gmail.com>"]
 edition = "2018"
 description = "Tokio smoltcp"
@@ -15,7 +15,7 @@ tokio-util = "0.6.7"
 [dependencies.smoltcp]
 version = "0.7.0"
 default-features = false
-features = [ "std", "async", "socket-tcp", "ethernet" ]
+features = [ "std", "async", "socket-tcp", "socket-udp", "ethernet" ]
 # "medium-ethernet", "medium-ip"
 # remove git when 0.8.0 released
 # git = "https://github.com/smoltcp-rs/smoltcp.git"

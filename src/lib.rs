@@ -15,7 +15,7 @@ use smoltcp::{
     iface::{EthernetInterfaceBuilder, NeighborCache, Routes},
     wire::{EthernetAddress, IpAddress, IpCidr},
 };
-pub use socket::{TcpListener, TcpSocket};
+pub use socket::{TcpListener, TcpSocket, UdpSocket};
 pub use socket_alloctor::BufferSize;
 use tokio::sync::Notify;
 
@@ -86,6 +86,9 @@ impl Net {
             addr.into(),
         )
         .await
+    }
+    pub async fn udp_bind(&self, addr: SocketAddr) -> io::Result<UdpSocket> {
+        UdpSocket::new(self.reactor.clone(), addr.into()).await
     }
 }
 
