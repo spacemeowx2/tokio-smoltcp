@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     io,
-    net::SocketAddr,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::{
         atomic::{AtomicU16, Ordering},
         Arc,
@@ -77,6 +77,7 @@ impl Net {
             .unwrap()
     }
     pub async fn tcp_bind(&self, addr: SocketAddr) -> io::Result<TcpListener> {
+        let addr = self.set_address(addr);
         TcpListener::new(self.reactor.clone(), addr.into()).await
     }
     pub async fn tcp_connect(&self, addr: SocketAddr) -> io::Result<TcpSocket> {
@@ -88,7 +89,21 @@ impl Net {
         .await
     }
     pub async fn udp_bind(&self, addr: SocketAddr) -> io::Result<UdpSocket> {
+        let addr = self.set_address(addr);
         UdpSocket::new(self.reactor.clone(), addr.into()).await
+    }
+    fn set_address(&self, mut addr: SocketAddr) -> SocketAddr {
+        if addr.ip().is_unspecified() {
+            addr.set_ip(match self.ip_addr.address() {
+                IpAddress::Ipv4(ip) => Ipv4Addr::from(ip).into(),
+                IpAddress::Ipv6(ip) => Ipv6Addr::from(ip).into(),
+                _ => panic!("address must not be unspecified"),
+            });
+        }
+        if addr.port() == 0 {
+            addr.set_port(self.get_port());
+        }
+        addr
     }
 }
 

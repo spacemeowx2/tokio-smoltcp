@@ -122,9 +122,8 @@ async fn async_main(opt: Opt) -> Result<()> {
     );
     tokio::spawn(fut);
 
-    let udp = net
-        .udp_bind(format!("{}:123", ip_addr.address().to_string()).parse()?)
-        .await?;
+    let udp = net.udp_bind("0.0.0.0:0".parse()?).await?;
+    println!("udp local_addr {:?}", udp.local_addr());
     let mut query_builder = dns_parser::Builder::new_query(1, true);
     query_builder.add_question(
         "www.baidu.com",
