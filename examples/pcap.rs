@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Context, Result};
+use dns_parser::QueryType;
 use pcap::{Capture, Device};
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
 use structopt::StructOpt;
@@ -121,8 +122,34 @@ async fn async_main(opt: Opt) -> Result<()> {
     );
     tokio::spawn(fut);
 
-    println!("Connecting");
-    let mut tcp = net.tcp_connect("39.156.69.79:80".parse()?).await?;
+    let udp = net
+        .udp_bind(format!("{}:123", ip_addr.address().to_string()).parse()?)
+        .await?;
+    let mut query_builder = dns_parser::Builder::new_query(1, true);
+    query_builder.add_question(
+        "www.baidu.com",
+        false,
+        QueryType::A,
+        dns_parser::QueryClass::IN,
+    );
+    let query = query_builder.build().unwrap();
+    udp.send_to(&query, "114.114.114.114:53".parse()?).await?;
+    let mut answer = [0u8; 1024];
+    let (size, _) = udp.recv_from(&mut answer).await?;
+    let packet = dns_parser::Packet::parse(&answer[..size])?;
+    println!("dns answer packet: {:#?}", packet);
+    let dst_ip = packet
+        .answers
+        .iter()
+        .filter_map(|a| match a.data {
+            dns_parser::RData::A(dns_parser::rdata::A(ip)) => Some(ip),
+            _ => None,
+        })
+        .next()
+        .expect("No A record in response");
+
+    println!("Connecting www.baidu.com");
+    let mut tcp = net.tcp_connect((dst_ip, 80).into()).await?;
     println!("Connected");
 
     tcp.write_all(b"GET / HTTP/1.0\r\nHost: www.baidu.com\r\n\r\n")

@@ -277,7 +277,7 @@ impl UdpSocket {
         Poll::Pending
     }
     /// See note on `poll_send_to`
-    pub async fn send_to(&mut self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
+    pub async fn send_to(&self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
         poll_fn(|cx| self.poll_send_to(cx, buf, target)).await
     }
     /// Note that on multiple calls to a poll_* method in the recv direction, only the Waker from the Context passed to the most recent call will be scheduled to receive a wakeup.
@@ -302,7 +302,7 @@ impl UdpSocket {
         Poll::Pending
     }
     /// See note on `poll_recv_from`
-    pub async fn recv_from(&mut self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+    pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         poll_fn(|cx| self.poll_recv_from(cx, buf)).await
     }
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
