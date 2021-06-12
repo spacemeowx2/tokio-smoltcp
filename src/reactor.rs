@@ -24,36 +24,36 @@ async fn run<S: device::Interface + 'static>(
     pin!(timer);
 
     loop {
-        let start = Instant::now();
-        let deadline = {
-            interf
-                .poll_delay(&*sockets.lock(), start)
-                .unwrap_or(default_timeout)
-        };
-        let device = interf.device_mut();
-        device.send_queue().await.expect("Failed to send queue");
+        interf
+            .device_mut()
+            .send_queue()
+            .await
+            .expect("Failed to send queue");
 
-        if device.need_wait() {
+        if interf.device_mut().need_wait() {
+            let start = Instant::now();
+            let deadline = {
+                interf
+                    .poll_delay(&*sockets.lock(), start)
+                    .unwrap_or(default_timeout)
+            };
+
             timer
                 .as_mut()
                 .reset(tokio::time::Instant::now() + deadline.into());
             select! {
                 _ = &mut timer => {},
-                _ = device.wait() => {}
+                _ = interf.device_mut().wait() => {}
                 _ = notify.notified() => {}
                 _ = stopper.notified() => break,
             };
         }
-
-        let mut set = sockets.lock();
-        let end = Instant::now();
-        match interf.poll(&mut set, end) {
-            Ok(true) => (),
+        match interf.poll(&mut sockets.lock(), Instant::now()) {
+            Ok(true) => {}
             // readiness not changed
             Ok(false) | Err(smoltcp::Error::Dropped) => continue,
-            Err(_e) => {
-                continue;
-            }
+            // Other error
+            Err(_e) => continue,
         };
     }
 }
