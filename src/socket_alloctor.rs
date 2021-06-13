@@ -1,9 +1,12 @@
+use parking_lot::{Mutex, MutexGuard};
 use smoltcp::socket::{
     SocketHandle as InnerSocketHandle, SocketSet as InnerSocketSet, TcpSocket, TcpSocketBuffer,
     UdpPacketMetadata, UdpSocket, UdpSocketBuffer,
 };
-use std::ops::{Deref, DerefMut};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::{
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 
 #[derive(Debug, Clone, Copy)]
 pub struct BufferSize {
@@ -39,15 +42,15 @@ impl SocketAlloctor {
         }
     }
     pub fn lock(&self) -> MutexGuard<InnerSocketSet<'static>> {
-        self.set.lock().unwrap()
+        self.set.lock()
     }
     pub fn new_tcp_socket(&self) -> SocketHandle {
-        let mut set = self.set.lock().unwrap();
+        let mut set = self.lock();
         let handle = set.add(self.alloc_tcp_socket());
         SocketHandle::new(handle, self.set.clone())
     }
     pub fn new_udp_socket(&self) -> SocketHandle {
-        let mut set = self.set.lock().unwrap();
+        let mut set = self.lock();
         let handle = set.add(self.alloc_udp_socket());
         SocketHandle::new(handle, self.set.clone())
     }
@@ -83,7 +86,7 @@ impl SocketHandle {
 
 impl Drop for SocketHandle {
     fn drop(&mut self) {
-        let mut set = self.1.lock().unwrap();
+        let mut set = self.1.lock();
         set.remove(self.0);
     }
 }
