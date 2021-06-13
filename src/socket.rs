@@ -277,6 +277,7 @@ impl UdpSocket {
             Err(smoltcp::Error::Truncated) => {}
             r => {
                 r.map_err(map_err)?;
+                self.reactor.notify();
                 return Poll::Ready(Ok(buf.len()));
             }
         }
