@@ -219,12 +219,20 @@ impl AsyncWrite for TcpSocket {
         socket.register_send_waker(cx.waker());
         Poll::Pending
     }
-    // TODO finish shutdown
-    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
         let mut set = self.reactor.socket_alloctor().lock();
         let mut socket = set.get::<socket::TcpSocket>(*self.handle);
-        socket.close();
-        Poll::Ready(Ok(()))
+
+        if socket.is_open() {
+            socket.close();
+            self.reactor.notify();
+        }
+        if socket.state() == TcpState::Closed {
+            return Poll::Ready(Ok(()));
+        }
+
+        socket.register_send_waker(cx.waker());
+        Poll::Pending
     }
 }
 
