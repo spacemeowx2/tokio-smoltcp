@@ -282,7 +282,7 @@ impl UdpSocket {
             }
         }
 
-        socket.register_recv_waker(cx.waker());
+        socket.register_send_waker(cx.waker());
         Poll::Pending
     }
     /// See note on `poll_send_to`
