@@ -48,13 +48,11 @@ async fn run<S: device::Interface + 'static>(
                 _ = stopper.notified() => break,
             };
         }
-        match interf.poll(&mut sockets.lock(), Instant::now()) {
-            Ok(true) => {}
-            // readiness not changed
-            Ok(false) | Err(smoltcp::Error::Dropped) => continue,
-            // Other error
-            Err(_e) => continue,
-        };
+
+        while !matches!(
+            interf.poll(&mut sockets.lock(), Instant::now()),
+            Ok(_) | Err(smoltcp::Error::Exhausted)
+        ) {}
     }
 }
 
@@ -80,6 +78,6 @@ impl Reactor {
         &self.socket_alloctor
     }
     pub fn notify(&self) {
-        self.notify.clone().notify_waiters();
+        self.notify.notify_waiters();
     }
 }

@@ -1,4 +1,4 @@
-use futures::{stream, FutureExt, Sink, Stream, StreamExt};
+use futures::{stream, FutureExt, Sink, SinkExt, Stream, StreamExt};
 use smoltcp::{
     phy::{Device, DeviceCapabilities, RxToken, TxToken},
     time::Instant,
@@ -118,6 +118,7 @@ where
         let size = self.send_queue.len();
         let stream = stream::iter(self.send_queue.drain(..).map(|i| Ok(i)));
         stream.forward(&mut self.stream).await?;
+        self.stream.flush().await?;
         Ok(size)
     }
 }
