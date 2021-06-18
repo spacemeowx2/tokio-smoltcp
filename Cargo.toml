@@ -16,7 +16,7 @@ parking_lot = "0.11.1"
 [dependencies.smoltcp]
 version = "0.7.4"
 default-features = false
-features = [ "std", "async", "socket-tcp", "socket-udp", "ethernet" ]
+features = [ "std", "async", "socket-tcp", "socket-udp", "socket-raw", "ethernet" ]
 # "medium-ethernet", "medium-ip"
 # remove git when 0.8.0 released
 # git = "https://github.com/smoltcp-rs/smoltcp.git"

@@ -318,3 +318,85 @@ impl UdpSocket {
         Ok(self.local_addr)
     }
 }
+
+pub struct RawSocket {
+    handle: SocketHandle,
+    reactor: Arc<Reactor>,
+    local_addr: SocketAddr,
+}
+
+impl RawSocket {
+    pub(super) async fn new(
+        reactor: Arc<Reactor>,
+        local_endpoint: IpEndpoint,
+    ) -> io::Result<RawSocket> {
+        let handle = reactor.socket_alloctor().new_udp_socket();
+        {
+            let mut set = reactor.socket_alloctor().lock();
+            let mut socket = set.get::<socket::RawSocket>(*handle);
+        }
+
+        let local_addr = ep2sa(&local_endpoint);
+
+        Ok(RawSocket {
+            handle,
+            reactor,
+            local_addr,
+        })
+    }
+    /// Note that on multiple calls to a poll_* method in the send direction, only the Waker from the Context passed to the most recent call will be scheduled to receive a wakeup.
+    pub fn poll_send_to(
+        &self,
+        cx: &mut Context<'_>,
+        buf: &[u8],
+        target: SocketAddr,
+    ) -> Poll<io::Result<usize>> {
+        let mut set = self.reactor.socket_alloctor().lock();
+        let mut socket = set.get::<socket::UdpSocket>(*self.handle);
+
+        match socket.send_slice(buf, target.into()) {
+            // the buffer is full
+            Err(smoltcp::Error::Truncated) => {}
+            r => {
+                r.map_err(map_err)?;
+                self.reactor.notify();
+                return Poll::Ready(Ok(buf.len()));
+            }
+        }
+
+        socket.register_send_waker(cx.waker());
+        Poll::Pending
+    }
+    /// See note on `poll_send_to`
+    pub async fn send_to(&self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
+        poll_fn(|cx| self.poll_send_to(cx, buf, target)).await
+    }
+    /// Note that on multiple calls to a poll_* method in the recv direction, only the Waker from the Context passed to the most recent call will be scheduled to receive a wakeup.
+    pub fn poll_recv_from(
+        &self,
+        cx: &mut Context<'_>,
+        buf: &mut [u8],
+    ) -> Poll<io::Result<(usize, SocketAddr)>> {
+        let mut set = self.reactor.socket_alloctor().lock();
+        let mut socket = set.get::<socket::UdpSocket>(*self.handle);
+
+        match socket.recv_slice(buf) {
+            // the buffer is empty
+            Err(smoltcp::Error::Exhausted) => {}
+            r => {
+                let (size, endpoint) = r.map_err(map_err)?;
+                return Poll::Ready(Ok((size, ep2sa(&endpoint))));
+            }
+        }
+
+        socket.register_recv_waker(cx.waker());
+        Poll::Pending
+    }
+    /// See note on `poll_recv_from`
+    pub async fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
+        poll_fn(|cx| self.poll_recv_from(cx, buf)).await
+    }
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        Ok(self.local_addr)
+    }
+}
