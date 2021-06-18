@@ -116,7 +116,7 @@ async fn async_main(opt: Opt) -> Result<()> {
         NetConfig {
             ethernet_addr,
             ip_addr,
-            gateway,
+            gateway: vec![gateway],
             buffer_size: Default::default(),
         },
     );

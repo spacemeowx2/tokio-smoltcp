@@ -28,7 +28,7 @@ pub mod util;
 pub struct NetConfig {
     pub ethernet_addr: EthernetAddress,
     pub ip_addr: IpCidr,
-    pub gateway: IpAddress,
+    pub gateway: Vec<IpAddress>,
     pub buffer_size: BufferSize,
 }
 
@@ -45,10 +45,17 @@ impl Net {
         config: NetConfig,
     ) -> (Net, impl Future<Output = ()> + Send) {
         let mut routes = Routes::new(BTreeMap::new());
-        match config.gateway {
-            IpAddress::Ipv4(v4) => routes.add_default_ipv4_route(v4).unwrap(),
-            _ => panic!("gateway should be set"),
-        };
+        for gateway in config.gateway {
+            match gateway {
+                IpAddress::Ipv4(v4) => {
+                    routes.add_default_ipv4_route(v4).unwrap();
+                }
+                IpAddress::Ipv6(v6) => {
+                    routes.add_default_ipv6_route(v6).unwrap();
+                }
+                _ => panic!("Unsupported address"),
+            };
+        }
         let neighbor_cache = NeighborCache::new(BTreeMap::new());
         let interf = EthernetInterfaceBuilder::new(device)
             .ethernet_addr(config.ethernet_addr)
