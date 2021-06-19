@@ -2,7 +2,7 @@ use super::{reactor::Reactor, socket_alloctor::SocketHandle};
 use futures::future::{self, poll_fn};
 use futures::{ready, Stream};
 pub use smoltcp::socket::{self, AnySocket, SocketRef, TcpState};
-use smoltcp::wire::{IpAddress, IpEndpoint};
+use smoltcp::wire::{IpAddress, IpEndpoint, IpProtocol, IpVersion};
 use std::mem::replace;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::{
@@ -53,7 +53,6 @@ impl TcpListener {
         if socket.state() == TcpState::Established {
             drop(socket);
             drop(set);
-            eprintln!("accepted ");
             return Poll::Ready(Ok(TcpSocket::accept(self)?));
         }
         socket.register_send_waker(cx.waker());
@@ -316,5 +315,67 @@ impl UdpSocket {
     }
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
         Ok(self.local_addr)
+    }
+}
+
+pub struct RawSocket {
+    handle: SocketHandle,
+    reactor: Arc<Reactor>,
+}
+
+impl RawSocket {
+    pub(super) async fn new(
+        reactor: Arc<Reactor>,
+        ip_version: IpVersion,
+        ip_protocol: IpProtocol,
+    ) -> io::Result<RawSocket> {
+        let handle = reactor
+            .socket_alloctor()
+            .new_raw_socket(ip_version, ip_protocol);
+
+        Ok(RawSocket { handle, reactor })
+    }
+    /// Note that on multiple calls to a poll_* method in the send direction, only the Waker from the Context passed to the most recent call will be scheduled to receive a wakeup.
+    pub fn poll_send(&self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        let mut set = self.reactor.socket_alloctor().lock();
+        let mut socket = set.get::<socket::RawSocket>(*self.handle);
+
+        match socket.send_slice(buf) {
+            // the buffer is full
+            Err(smoltcp::Error::Truncated) => {}
+            r => {
+                r.map_err(map_err)?;
+                self.reactor.notify();
+                return Poll::Ready(Ok(buf.len()));
+            }
+        }
+
+        socket.register_send_waker(cx.waker());
+        Poll::Pending
+    }
+    /// See note on `poll_send`
+    pub async fn send(&self, buf: &[u8]) -> io::Result<usize> {
+        poll_fn(|cx| self.poll_send(cx, buf)).await
+    }
+    /// Note that on multiple calls to a poll_* method in the recv direction, only the Waker from the Context passed to the most recent call will be scheduled to receive a wakeup.
+    pub fn poll_recv(&self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
+        let mut set = self.reactor.socket_alloctor().lock();
+        let mut socket = set.get::<socket::RawSocket>(*self.handle);
+
+        match socket.recv_slice(buf) {
+            // the buffer is empty
+            Err(smoltcp::Error::Exhausted) => {}
+            r => {
+                let size = r.map_err(map_err)?;
+                return Poll::Ready(Ok(size));
+            }
+        }
+
+        socket.register_recv_waker(cx.waker());
+        Poll::Pending
+    }
+    /// See note on `poll_recv`
+    pub async fn recv(&self, buf: &mut [u8]) -> io::Result<usize> {
+        poll_fn(|cx| self.poll_recv(cx, buf)).await
     }
 }

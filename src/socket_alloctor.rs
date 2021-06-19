@@ -1,7 +1,11 @@
 use parking_lot::{Mutex, MutexGuard};
-use smoltcp::socket::{
-    SocketHandle as InnerSocketHandle, SocketSet as InnerSocketSet, TcpSocket, TcpSocketBuffer,
-    UdpPacketMetadata, UdpSocket, UdpSocketBuffer,
+use smoltcp::{
+    socket::{
+        RawPacketMetadata, RawSocket, RawSocketBuffer, SocketHandle as InnerSocketHandle,
+        SocketSet as InnerSocketSet, TcpSocket, TcpSocketBuffer, UdpPacketMetadata, UdpSocket,
+        UdpSocketBuffer,
+    },
+    wire::{IpProtocol, IpVersion},
 };
 use std::{
     ops::{Deref, DerefMut},
@@ -14,7 +18,12 @@ pub struct BufferSize {
     pub tcp_tx_size: usize,
     pub udp_rx_size: usize,
     pub udp_tx_size: usize,
-    pub udp_meta_size: usize,
+    pub udp_rx_meta_size: usize,
+    pub udp_tx_meta_size: usize,
+    pub raw_rx_size: usize,
+    pub raw_tx_size: usize,
+    pub raw_rx_meta_size: usize,
+    pub raw_tx_meta_size: usize,
 }
 
 impl Default for BufferSize {
@@ -24,7 +33,12 @@ impl Default for BufferSize {
             tcp_tx_size: 8192,
             udp_rx_size: 8192,
             udp_tx_size: 8192,
-            udp_meta_size: 32,
+            udp_rx_meta_size: 32,
+            udp_tx_meta_size: 32,
+            raw_rx_size: 8192,
+            raw_tx_size: 8192,
+            raw_rx_meta_size: 32,
+            raw_tx_meta_size: 32,
         }
     }
 }
@@ -54,6 +68,11 @@ impl SocketAlloctor {
         let handle = set.add(self.alloc_udp_socket());
         SocketHandle::new(handle, self.set.clone())
     }
+    pub fn new_raw_socket(&self, ip_version: IpVersion, ip_protocol: IpProtocol) -> SocketHandle {
+        let mut set = self.lock();
+        let handle = set.add(self.alloc_raw_socket(ip_version, ip_protocol));
+        SocketHandle::new(handle, self.set.clone())
+    }
     fn alloc_tcp_socket(&self) -> TcpSocket<'static> {
         let rx_buffer = TcpSocketBuffer::new(vec![0; self.buffer_size.tcp_rx_size]);
         let tx_buffer = TcpSocketBuffer::new(vec![0; self.buffer_size.tcp_tx_size]);
@@ -63,16 +82,33 @@ impl SocketAlloctor {
     }
     fn alloc_udp_socket(&self) -> UdpSocket<'static> {
         let rx_buffer = UdpSocketBuffer::new(
-            vec![UdpPacketMetadata::EMPTY; self.buffer_size.udp_meta_size],
+            vec![UdpPacketMetadata::EMPTY; self.buffer_size.udp_rx_meta_size],
             vec![0; self.buffer_size.udp_rx_size],
         );
         let tx_buffer = UdpSocketBuffer::new(
-            vec![UdpPacketMetadata::EMPTY; self.buffer_size.udp_meta_size],
+            vec![UdpPacketMetadata::EMPTY; self.buffer_size.udp_tx_meta_size],
             vec![0; self.buffer_size.udp_tx_size],
         );
         let udp = UdpSocket::new(rx_buffer, tx_buffer);
 
         udp
+    }
+    fn alloc_raw_socket(
+        &self,
+        ip_version: IpVersion,
+        ip_protocol: IpProtocol,
+    ) -> RawSocket<'static> {
+        let rx_buffer = RawSocketBuffer::new(
+            vec![RawPacketMetadata::EMPTY; self.buffer_size.udp_rx_meta_size],
+            vec![0; self.buffer_size.udp_rx_size],
+        );
+        let tx_buffer = RawSocketBuffer::new(
+            vec![RawPacketMetadata::EMPTY; self.buffer_size.udp_tx_meta_size],
+            vec![0; self.buffer_size.udp_tx_size],
+        );
+        let raw = RawSocket::new(ip_version, ip_protocol, rx_buffer, tx_buffer);
+
+        raw
     }
 }
 

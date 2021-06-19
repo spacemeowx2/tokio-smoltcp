@@ -11,11 +11,12 @@ use std::{
 use device::FutureDevice;
 use futures::Future;
 use reactor::Reactor;
+pub use smoltcp;
 use smoltcp::{
     iface::{EthernetInterfaceBuilder, NeighborCache, Routes},
-    wire::{EthernetAddress, IpAddress, IpCidr},
+    wire::{EthernetAddress, IpAddress, IpCidr, IpProtocol, IpVersion},
 };
-pub use socket::{TcpListener, TcpSocket, UdpSocket};
+pub use socket::{RawSocket, TcpListener, TcpSocket, UdpSocket};
 pub use socket_alloctor::BufferSize;
 use tokio::sync::Notify;
 
@@ -98,6 +99,13 @@ impl Net {
     pub async fn udp_bind(&self, addr: SocketAddr) -> io::Result<UdpSocket> {
         let addr = self.set_address(addr);
         UdpSocket::new(self.reactor.clone(), addr.into()).await
+    }
+    pub async fn raw_socket(
+        &self,
+        ip_version: IpVersion,
+        ip_protocol: IpProtocol,
+    ) -> io::Result<RawSocket> {
+        RawSocket::new(self.reactor.clone(), ip_version, ip_protocol).await
     }
     fn set_address(&self, mut addr: SocketAddr) -> SocketAddr {
         if addr.ip().is_unspecified() {
