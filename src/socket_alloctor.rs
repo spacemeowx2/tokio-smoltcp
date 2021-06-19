@@ -99,12 +99,12 @@ impl SocketAlloctor {
         ip_protocol: IpProtocol,
     ) -> RawSocket<'static> {
         let rx_buffer = RawSocketBuffer::new(
-            vec![RawPacketMetadata::EMPTY; self.buffer_size.udp_rx_meta_size],
-            vec![0; self.buffer_size.udp_rx_size],
+            vec![RawPacketMetadata::EMPTY; self.buffer_size.raw_rx_meta_size],
+            vec![0; self.buffer_size.raw_rx_size],
         );
         let tx_buffer = RawSocketBuffer::new(
-            vec![RawPacketMetadata::EMPTY; self.buffer_size.udp_tx_meta_size],
-            vec![0; self.buffer_size.udp_tx_size],
+            vec![RawPacketMetadata::EMPTY; self.buffer_size.raw_tx_meta_size],
+            vec![0; self.buffer_size.raw_tx_size],
         );
         let raw = RawSocket::new(ip_version, ip_protocol, rx_buffer, tx_buffer);
 
