@@ -273,7 +273,7 @@ impl UdpSocket {
 
         match socket.send_slice(buf, target.into()) {
             // the buffer is full
-            Err(smoltcp::Error::Truncated) => {}
+            Err(smoltcp::Error::Truncated) | Err(smoltcp::Error::Exhausted) => {}
             r => {
                 r.map_err(map_err)?;
                 self.reactor.notify();
@@ -342,7 +342,7 @@ impl RawSocket {
 
         match socket.send_slice(buf) {
             // the buffer is full
-            Err(smoltcp::Error::Truncated) => {}
+            Err(smoltcp::Error::Truncated) | Err(smoltcp::Error::Exhausted) => {}
             r => {
                 r.map_err(map_err)?;
                 self.reactor.notify();
