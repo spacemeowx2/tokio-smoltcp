@@ -13,7 +13,8 @@ use futures::Future;
 use reactor::Reactor;
 pub use smoltcp;
 use smoltcp::{
-    iface::{EthernetInterfaceBuilder, NeighborCache, Routes},
+    iface::{InterfaceBuilder, NeighborCache, Routes},
+    phy::{Device, Medium},
     wire::{EthernetAddress, IpAddress, IpCidr, IpProtocol, IpVersion},
 };
 pub use socket::{RawSocket, TcpListener, TcpSocket, UdpSocket};
@@ -58,12 +59,18 @@ impl Net {
             };
         }
         let neighbor_cache = NeighborCache::new(BTreeMap::new());
-        let interf = EthernetInterfaceBuilder::new(device)
-            .ethernet_addr(config.ethernet_addr)
-            .neighbor_cache(neighbor_cache)
-            .ip_addrs(vec![config.ip_addr.clone()])
-            .routes(routes)
-            .finalize();
+        let interf = match device.capabilities().medium {
+            Medium::Ethernet => InterfaceBuilder::new(device)
+                .ethernet_addr(config.ethernet_addr)
+                .neighbor_cache(neighbor_cache)
+                .ip_addrs(vec![config.ip_addr.clone()])
+                .routes(routes)
+                .finalize(),
+            Medium::Ip => InterfaceBuilder::new(device)
+                .ip_addrs(vec![config.ip_addr.clone()])
+                .routes(routes)
+                .finalize(),
+        };
         let stopper = Arc::new(Notify::new());
         let (reactor, fut) = Reactor::new(interf, config.buffer_size, stopper.clone());
 
