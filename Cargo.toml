@@ -19,7 +19,7 @@ default-features = false
 features = [ "std", "async", "socket-tcp", "socket-udp", "socket-raw", "medium-ethernet", "medium-ip" ]
 # remove git when 0.8.0 released
 git = "https://github.com/smoltcp-rs/smoltcp.git"
-rev = "027f255f904b9b7c4226cfd8b2d31f272ffa5105"
+rev = "dedfbe1e7da2316b4e3c4a8c228c19b28190e3ea"
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
