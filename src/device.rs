@@ -116,8 +116,10 @@ where
     }
     pub(crate) async fn send_queue(&mut self) -> io::Result<usize> {
         let size = self.send_queue.len();
-        let stream = stream::iter(self.send_queue.drain(..).map(|i| Ok(i)));
-        stream.forward(&mut self.stream).await?;
+        let mut stream = stream::iter(self.send_queue.drain(..));
+        while let Some(p) = stream.next().await {
+            self.stream.send(p).await?;
+        }
         self.stream.flush().await?;
         Ok(size)
     }
