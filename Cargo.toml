@@ -15,7 +15,7 @@ license = "MIT OR Apache-2.0"
 futures = "0.3"
 pin-project-lite = "0.2.6"
 tokio = { version = "1.6.1", features = ["time", "rt"] }
-tokio-util = "0.6.7"
+tokio-util = { version="0.6.7", features = ["net", "codec"] }
 parking_lot = "0.11.1"
 
 [dependencies.smoltcp]
@@ -32,6 +32,8 @@ anyhow = "1.0"
 pcap = "0.8.1"
 structopt = "0.3"
 dns-parser = "0.8"
+log = "0.4"
+env_logger = "0.9"
 
 [features]
 default = [ "proto-ipv4", "proto-ipv6", "raw_socket" ]

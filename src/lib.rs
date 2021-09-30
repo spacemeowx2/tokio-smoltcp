@@ -22,6 +22,7 @@ pub use socket_allocator::BufferSize;
 use tokio::sync::Notify;
 
 pub mod device;
+pub mod join;
 mod reactor;
 mod socket;
 mod socket_allocator;
