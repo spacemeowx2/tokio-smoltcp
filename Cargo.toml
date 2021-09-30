@@ -4,6 +4,11 @@ version = "0.1.14"
 authors = ["spacemeowx2 <spacemeowx2@gmail.com>"]
 edition = "2018"
 description = "Tokio smoltcp"
+documentation = "https://docs.rs/tokio-smoltcp/"
+homepage = "https://github.com/spacemeowx2/tokio-smoltcp"
+repository = "https://github.com/spacemeowx2/tokio-smoltcp.git"
+keywords = ["async", "smoltcp", "tokio"]
+categories = ["asynchronous", "network-programming"]
 license = "MIT OR Apache-2.0"
 
 [dependencies]
