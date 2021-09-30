@@ -1,5 +1,5 @@
 use crate::device::{self, FutureDevice};
-use crate::socket_alloctor::SocketAlloctor;
+use crate::socket_allocator::SocketAlloctor;
 use crate::BufferSize;
 use smoltcp::{
     iface::Interface,
@@ -9,7 +9,7 @@ use std::{future::Future, sync::Arc};
 use tokio::{pin, select, sync::Notify, time::sleep};
 
 pub struct Reactor {
-    socket_alloctor: Arc<SocketAlloctor>,
+    socket_allocator: Arc<SocketAlloctor>,
     notify: Arc<Notify>,
 }
 
@@ -62,20 +62,20 @@ impl Reactor {
         buffer_size: BufferSize,
         stopper: Arc<Notify>,
     ) -> (Self, impl Future<Output = ()> + Send) {
-        let socket_alloctor = Arc::new(SocketAlloctor::new(buffer_size));
+        let socket_allocator = Arc::new(SocketAlloctor::new(buffer_size));
         let notify = Arc::new(Notify::new());
-        let fut = run(interf, socket_alloctor.clone(), notify.clone(), stopper);
+        let fut = run(interf, socket_allocator.clone(), notify.clone(), stopper);
 
         (
             Reactor {
-                socket_alloctor,
+                socket_allocator,
                 notify,
             },
             fut,
         )
     }
-    pub fn socket_alloctor(&self) -> &Arc<SocketAlloctor> {
-        &self.socket_alloctor
+    pub fn socket_allocator(&self) -> &Arc<SocketAlloctor> {
+        &self.socket_allocator
     }
     pub fn notify(&self) {
         self.notify.notify_waiters();

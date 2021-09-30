@@ -18,13 +18,13 @@ use smoltcp::{
     wire::{EthernetAddress, IpAddress, IpCidr, IpProtocol, IpVersion},
 };
 pub use socket::{RawSocket, TcpListener, TcpSocket, UdpSocket};
-pub use socket_alloctor::BufferSize;
+pub use socket_allocator::BufferSize;
 use tokio::sync::Notify;
 
 pub mod device;
 mod reactor;
 mod socket;
-mod socket_alloctor;
+mod socket_allocator;
 pub mod util;
 
 pub struct NetConfig {
