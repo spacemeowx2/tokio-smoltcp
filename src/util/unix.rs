@@ -1,5 +1,6 @@
 use futures::{ready, Sink, Stream};
 use pin_project_lite::pin_project;
+use smoltcp::phy::DeviceCapabilities;
 use std::{
     io,
     os::unix::io::{AsRawFd, RawFd},
@@ -7,6 +8,8 @@ use std::{
     task::{Context, Poll},
 };
 use tokio::io::{unix::AsyncFd, Interest};
+
+use crate::device::AsyncDevice;
 
 pin_project! {
     pub struct AsyncCapture<T, R, S> {
@@ -16,6 +19,7 @@ pin_project! {
         async_fd: AsyncFd<RawFd>,
         temp: Option<Vec<u8>>,
         poll_write: bool,
+        caps: DeviceCapabilities,
     }
 }
 
@@ -25,7 +29,7 @@ where
     R: Fn(&mut T) -> io::Result<Vec<u8>>,
     S: Fn(&mut T, &[u8]) -> io::Result<()>,
 {
-    pub fn new(obj: T, recv: R, send: S) -> io::Result<Self> {
+    pub fn new(obj: T, recv: R, send: S, caps: DeviceCapabilities) -> io::Result<Self> {
         let async_fd = AsyncFd::with_interest(obj.as_raw_fd(), Interest::READABLE)?;
         Ok(AsyncCapture {
             obj,
@@ -34,15 +38,16 @@ where
             async_fd,
             temp: None,
             poll_write: false,
+            caps,
         })
     }
 }
 
 impl<T, R, S> Stream for AsyncCapture<T, R, S>
 where
-    T: AsRawFd,
-    R: Fn(&mut T) -> io::Result<Vec<u8>>,
-    S: Fn(&mut T, &[u8]) -> io::Result<()>,
+    T: AsRawFd + Send,
+    R: Fn(&mut T) -> io::Result<Vec<u8>> + Send,
+    S: Fn(&mut T, &[u8]) -> io::Result<()> + Send,
 {
     type Item = io::Result<Vec<u8>>;
 
@@ -64,9 +69,9 @@ where
 
 impl<T, R, S> Sink<Vec<u8>> for AsyncCapture<T, R, S>
 where
-    T: AsRawFd,
-    R: Fn(&mut T) -> io::Result<Vec<u8>>,
-    S: Fn(&mut T, &[u8]) -> io::Result<()>,
+    T: AsRawFd + Send,
+    R: Fn(&mut T) -> io::Result<Vec<u8>> + Send,
+    S: Fn(&mut T, &[u8]) -> io::Result<()> + Send,
 {
     type Error = io::Error;
 
@@ -123,5 +128,16 @@ where
 
     fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
         Poll::Ready(Ok(()))
+    }
+}
+
+impl<T, R, S> AsyncDevice for AsyncCapture<T, R, S>
+where
+    T: AsRawFd + Send,
+    R: Fn(&mut T) -> io::Result<Vec<u8>> + Send,
+    S: Fn(&mut T, &[u8]) -> io::Result<()> + Send,
+{
+    fn capabilities(&self) -> &DeviceCapabilities {
+        &self.caps
     }
 }

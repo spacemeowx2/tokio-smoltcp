@@ -4,10 +4,7 @@ use pcap::{Capture, Device};
 use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
 use structopt::StructOpt;
 use tokio::io::{copy, split, AsyncReadExt, AsyncWriteExt};
-use tokio_smoltcp::{
-    device::{FutureDevice, Interface},
-    Net, NetConfig,
-};
+use tokio_smoltcp::{device::AsyncDevice, Net, NetConfig};
 
 #[derive(Debug, StructOpt)]
 struct Opt {
@@ -21,9 +18,8 @@ struct Opt {
 }
 
 #[cfg(unix)]
-fn get_by_device(device: Device) -> Result<impl Interface> {
-    use futures::StreamExt;
-    use std::future::ready;
+fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
+    use smoltcp::phy::DeviceCapabilities;
     use std::io;
     use tokio_smoltcp::util::AsyncCapture;
 
@@ -42,6 +38,9 @@ fn get_by_device(device: Device) -> Result<impl Interface> {
             other => io::Error::new(io::ErrorKind::Other, other),
         }
     }
+    let mut caps = DeviceCapabilities::default();
+    caps.max_burst_size = Some(100);
+    caps.max_transmission_unit = 1500;
 
     Ok(AsyncCapture::new(
         cap.setnonblock().context("Failed to set nonblock")?,
@@ -55,14 +54,13 @@ fn get_by_device(device: Device) -> Result<impl Interface> {
             // eprintln!("send {:?}", r);
             r
         },
+        caps,
     )
-    .context("Failed to create async capture")?
-    .take_while(|i| ready(i.is_ok()))
-    .map(|i| i.unwrap()))
+    .context("Failed to create async capture")?)
 }
 
 #[cfg(windows)]
-fn get_by_device(device: Device) -> Result<impl Interface> {
+fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
     use tokio::sync::mpsc::{Receiver, Sender};
     use tokio_smoltcp::util::ChannelCapture;
 
@@ -110,7 +108,7 @@ async fn async_main(opt: Opt) -> Result<()> {
     let ip_addr: IpCidr = opt.ip_addr.parse().unwrap();
     let gateway: IpAddress = opt.gateway.parse().unwrap();
 
-    let device = FutureDevice::new(get_by_device(device)?, 1500);
+    let device = get_by_device(device)?;
     let (net, fut) = Net::new(
         device,
         NetConfig {

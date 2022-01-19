@@ -21,10 +21,15 @@ parking_lot = "0.11.1"
 [dependencies.smoltcp]
 version = "0.8.0"
 default-features = false
-features = [ "std", "async", "socket-tcp", "socket-udp", "socket-raw", "medium-ethernet", "medium-ip" ]
-# remove git when 0.8.0 released
-git = "https://github.com/smoltcp-rs/smoltcp.git"
-rev = "dedfbe1e7da2316b4e3c4a8c228c19b28190e3ea"
+features = [
+    "std",
+    "async",
+    "socket-tcp",
+    "socket-udp",
+    "socket-raw",
+    "medium-ethernet",
+    "medium-ip",
+]
 
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
@@ -34,10 +39,10 @@ structopt = "0.3"
 dns-parser = "0.8"
 
 [features]
-default = [ "proto-ipv4", "proto-ipv6", "raw_socket" ]
-proto-ipv4 = [ "smoltcp/proto-ipv4" ]
-proto-ipv6 = [ "smoltcp/proto-ipv6" ]
-raw_socket = [ "smoltcp/socket-raw" ]
+default = ["proto-ipv4", "proto-ipv6", "raw_socket"]
+proto-ipv4 = ["smoltcp/proto-ipv4"]
+proto-ipv6 = ["smoltcp/proto-ipv6"]
+raw_socket = ["smoltcp/socket-raw"]
 
 [[example]]
 name = "pcap"

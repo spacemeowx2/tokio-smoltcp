@@ -8,13 +8,13 @@ use std::{
     },
 };
 
-use device::FutureDevice;
+use device::BufferDevice;
 use futures::Future;
 use reactor::Reactor;
 pub use smoltcp;
 use smoltcp::{
     iface::{InterfaceBuilder, NeighborCache, Routes},
-    phy::{Device, Medium},
+    phy::Medium,
     wire::{EthernetAddress, IpAddress, IpCidr, IpProtocol, IpVersion},
 };
 pub use socket::{RawSocket, TcpListener, TcpSocket, UdpSocket};
@@ -42,10 +42,10 @@ pub struct Net {
 }
 
 impl Net {
-    pub fn new<S: device::Interface + 'static>(
-        device: FutureDevice<S>,
+    pub fn new<D: device::AsyncDevice + 'static>(
+        device: D,
         config: NetConfig,
-    ) -> (Net, impl Future<Output = ()> + Send) {
+    ) -> (Net, impl Future<Output = io::Result<()>> + Send) {
         let mut routes = Routes::new(BTreeMap::new());
         for gateway in config.gateway {
             match gateway {
@@ -59,20 +59,21 @@ impl Net {
             };
         }
         let neighbor_cache = NeighborCache::new(BTreeMap::new());
+        let buffer_device = BufferDevice::new(device.capabilities().clone());
         let interf = match device.capabilities().medium {
-            Medium::Ethernet => InterfaceBuilder::new(device)
-                .ethernet_addr(config.ethernet_addr)
+            Medium::Ethernet => InterfaceBuilder::new(buffer_device, vec![])
+                .hardware_addr(config.ethernet_addr.into())
                 .neighbor_cache(neighbor_cache)
                 .ip_addrs(vec![config.ip_addr.clone()])
                 .routes(routes)
                 .finalize(),
-            Medium::Ip => InterfaceBuilder::new(device)
+            Medium::Ip => InterfaceBuilder::new(buffer_device, vec![])
                 .ip_addrs(vec![config.ip_addr.clone()])
                 .routes(routes)
                 .finalize(),
         };
         let stopper = Arc::new(Notify::new());
-        let (reactor, fut) = Reactor::new(interf, config.buffer_size, stopper.clone());
+        let (reactor, fut) = Reactor::new(device, interf, config.buffer_size, stopper.clone());
 
         (
             Net {
