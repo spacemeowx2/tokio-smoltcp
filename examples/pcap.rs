@@ -1,7 +1,10 @@
 use anyhow::{anyhow, Context, Result};
 use dns_parser::QueryType;
 use pcap::{Capture, Device};
-use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
+use smoltcp::{
+    phy::DeviceCapabilities,
+    wire::{EthernetAddress, IpAddress, IpCidr},
+};
 use structopt::StructOpt;
 use tokio::io::{copy, split, AsyncReadExt, AsyncWriteExt};
 use tokio_smoltcp::{device::AsyncDevice, Net, NetConfig};
@@ -19,7 +22,6 @@ struct Opt {
 
 #[cfg(unix)]
 fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
-    use smoltcp::phy::DeviceCapabilities;
     use std::io;
     use tokio_smoltcp::util::AsyncCapture;
 
@@ -63,6 +65,9 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
 fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
     use tokio::sync::mpsc::{Receiver, Sender};
     use tokio_smoltcp::util::ChannelCapture;
+    let mut caps = DeviceCapabilities::default();
+    caps.max_burst_size = Some(100);
+    caps.max_transmission_unit = 1500;
 
     let mut cap = Capture::from_device(device.clone())
         .context("Failed to capture device")?
@@ -79,7 +84,7 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
         .open()
         .context("Failed to open device")?;
 
-    let recv = move |tx: Sender<Vec<u8>>| loop {
+    let recv = move |tx: Sender<std::io::Result<Vec<u8>>>| loop {
         let p = match cap.next().map(|p| p.to_vec()) {
             Ok(p) => p,
             Err(pcap::Error::TimeoutExpired) => continue,
@@ -88,14 +93,14 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
                 break;
             }
         };
-        tx.blocking_send(p).unwrap();
+        tx.blocking_send(Ok(p)).unwrap();
     };
     let send = move |mut rx: Receiver<Vec<u8>>| {
         while let Some(pkt) = rx.blocking_recv() {
             send.sendpacket(pkt).unwrap();
         }
     };
-    let capture = ChannelCapture::new(recv, send);
+    let capture = ChannelCapture::new(recv, send, caps);
     Ok(capture)
 }
 
