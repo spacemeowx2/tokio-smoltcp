@@ -5,6 +5,13 @@ use smoltcp::{
     time::Instant,
 };
 use std::{collections::VecDeque, io};
+#[cfg(unix)]
+mod unix;
+#[cfg(unix)]
+pub use unix::*;
+
+pub use channel_capture::ChannelCapture;
+mod channel_capture;
 
 /// Default value of `max_burst_size`.
 pub const DEFAULT_MAX_BURST_SIZE: usize = 100;

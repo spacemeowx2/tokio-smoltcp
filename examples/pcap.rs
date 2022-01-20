@@ -23,7 +23,7 @@ struct Opt {
 #[cfg(unix)]
 fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
     use std::io;
-    use tokio_smoltcp::util::AsyncCapture;
+    use tokio_smoltcp::device::AsyncCapture;
 
     let cap = Capture::from_device(device.clone())
         .context("Failed to capture device")?
@@ -64,7 +64,7 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
 #[cfg(windows)]
 fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
     use tokio::sync::mpsc::{Receiver, Sender};
-    use tokio_smoltcp::util::ChannelCapture;
+    use tokio_smoltcp::device::ChannelCapture;
     let mut caps = DeviceCapabilities::default();
     caps.max_burst_size = Some(100);
     caps.max_transmission_unit = 1500;

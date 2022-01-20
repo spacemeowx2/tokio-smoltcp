@@ -23,13 +23,11 @@ pub use socket::{RawSocket, TcpListener, TcpStream, UdpSocket};
 pub use socket_allocator::BufferSize;
 use tokio::sync::Notify;
 
-/// The async device.
+/// The async devices.
 pub mod device;
 mod reactor;
 mod socket;
 mod socket_allocator;
-/// Utilities for making devices.
-pub mod util;
 
 /// A config for a `Net`.
 ///
