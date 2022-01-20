@@ -1,31 +1,42 @@
-use futures::{stream, FutureExt, Sink, SinkExt, Stream, StreamExt};
+use futures::{Sink, Stream};
+pub use smoltcp::phy::DeviceCapabilities;
 use smoltcp::{
-    phy::{Device, DeviceCapabilities, RxToken, TxToken},
+    phy::{Device, RxToken, TxToken},
     time::Instant,
 };
 use std::{collections::VecDeque, io};
+#[cfg(unix)]
+mod unix;
+#[cfg(unix)]
+pub use unix::*;
 
-pub const MAX_BURST_SIZE: usize = 100;
+pub use channel_capture::ChannelCapture;
+mod channel_capture;
+
+/// Default value of `max_burst_size`.
+pub const DEFAULT_MAX_BURST_SIZE: usize = 100;
+
+/// A packet used in `AsyncDevice`.
 pub type Packet = Vec<u8>;
-pub trait Interface:
-    Stream<Item = Packet> + Sink<Packet, Error = io::Error> + Send + Unpin
+
+/// A device that send and receive packets asynchronously.
+pub trait AsyncDevice:
+    Stream<Item = io::Result<Packet>> + Sink<Packet, Error = io::Error> + Send + Unpin
 {
-}
-impl<T> Interface for T where
-    T: Stream<Item = Packet> + Sink<Packet, Error = io::Error> + Send + Unpin
-{
+    /// Returns the device capabilities.
+    fn capabilities(&self) -> &DeviceCapabilities;
 }
 
-pub struct FutureDevice<S> {
-    pub caps: DeviceCapabilities,
-    stream: S,
-    temp: Option<Packet>,
+pub(crate) struct BufferDevice {
+    caps: DeviceCapabilities,
+    max_burst_size: usize,
+    recv_queue: VecDeque<Packet>,
     send_queue: VecDeque<Packet>,
 }
 
-pub struct FutureRxToken(Packet);
+pub(crate) struct BufferRxToken(Packet);
 
-impl RxToken for FutureRxToken {
+impl RxToken for BufferRxToken {
     fn consume<R, F>(mut self, _timestamp: Instant, f: F) -> smoltcp::Result<R>
     where
         F: FnOnce(&mut [u8]) -> smoltcp::Result<R>,
@@ -36,12 +47,9 @@ impl RxToken for FutureRxToken {
     }
 }
 
-pub struct FutureTxToken<'a, S>(&'a mut FutureDevice<S>);
+pub(crate) struct BufferTxToken<'a>(&'a mut BufferDevice);
 
-impl<'d, S> TxToken for FutureTxToken<'d, S>
-where
-    S: Interface,
-{
+impl<'d> TxToken for BufferTxToken<'d> {
     fn consume<R, F>(self, _timestamp: Instant, len: usize, f: F) -> smoltcp::Result<R>
     where
         F: FnOnce(&mut [u8]) -> smoltcp::Result<R>,
@@ -57,27 +65,20 @@ where
     }
 }
 
-impl<'a, S> Device<'a> for FutureDevice<S>
-where
-    S: Interface,
-    S: 'a,
-{
-    type RxToken = FutureRxToken;
-    type TxToken = FutureTxToken<'a, S>;
+impl<'a> Device<'a> for BufferDevice {
+    type RxToken = BufferRxToken;
+    type TxToken = BufferTxToken<'a>;
 
     fn receive(&'a mut self) -> Option<(Self::RxToken, Self::TxToken)> {
-        match self
-            .get_next()
-            .or_else(|| self.stream.next().now_or_never().flatten())
-        {
-            Some(p) => Some((FutureRxToken(p), FutureTxToken(self))),
+        match self.recv_queue.pop_front() {
+            Some(p) => Some((BufferRxToken(p), BufferTxToken(self))),
             None => None,
         }
     }
 
     fn transmit(&'a mut self) -> Option<Self::TxToken> {
-        if self.send_queue.len() < MAX_BURST_SIZE {
-            Some(FutureTxToken(self))
+        if self.send_queue.len() < self.max_burst_size {
+            Some(BufferTxToken(self))
         } else {
             None
         }
@@ -88,39 +89,29 @@ where
     }
 }
 
-impl<S> FutureDevice<S>
-where
-    S: Interface,
-{
-    pub fn new(stream: S, mtu: usize) -> FutureDevice<S> {
-        let mut caps = DeviceCapabilities::default();
-        caps.max_transmission_unit = mtu;
-        FutureDevice {
+impl BufferDevice {
+    pub fn new(caps: DeviceCapabilities) -> BufferDevice {
+        let max_burst_size = caps.max_burst_size.unwrap_or(DEFAULT_MAX_BURST_SIZE);
+        BufferDevice {
             caps,
-            stream,
-            temp: None,
-            send_queue: VecDeque::new(),
+            max_burst_size,
+            recv_queue: VecDeque::with_capacity(max_burst_size),
+            send_queue: VecDeque::with_capacity(max_burst_size),
         }
     }
-    pub(crate) fn need_wait(&self) -> bool {
-        self.temp.is_none()
+    pub fn take_send_queue(&mut self) -> VecDeque<Packet> {
+        std::mem::replace(
+            &mut self.send_queue,
+            VecDeque::with_capacity(self.max_burst_size),
+        )
     }
-    pub(crate) async fn wait(&mut self) {
-        self.temp = self.stream.next().await;
+    pub fn push_recv_queue(&mut self, p: impl Iterator<Item = Packet>) {
+        self.recv_queue.extend(p.take(self.avaliable_recv_queue()));
     }
-    pub(crate) fn get_next(&mut self) -> Option<Packet> {
-        if let Some(t) = self.temp.take() {
-            return Some(t);
-        }
-        None
+    pub fn avaliable_recv_queue(&self) -> usize {
+        self.max_burst_size - self.recv_queue.len()
     }
-    pub(crate) async fn send_queue(&mut self) -> io::Result<usize> {
-        let size = self.send_queue.len();
-        let mut stream = stream::iter(self.send_queue.drain(..));
-        while let Some(p) = stream.next().await {
-            self.stream.send(p).await?;
-        }
-        self.stream.flush().await?;
-        Ok(size)
+    pub fn need_wait(&self) -> bool {
+        self.recv_queue.len() == 0
     }
 }

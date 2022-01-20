@@ -1,13 +1,13 @@
 use anyhow::{anyhow, Context, Result};
 use dns_parser::QueryType;
 use pcap::{Capture, Device};
-use smoltcp::wire::{EthernetAddress, IpAddress, IpCidr};
+use smoltcp::{
+    phy::DeviceCapabilities,
+    wire::{EthernetAddress, IpAddress, IpCidr},
+};
 use structopt::StructOpt;
 use tokio::io::{copy, split, AsyncReadExt, AsyncWriteExt};
-use tokio_smoltcp::{
-    device::{FutureDevice, Interface},
-    Net, NetConfig,
-};
+use tokio_smoltcp::{device::AsyncDevice, Net, NetConfig};
 
 #[derive(Debug, StructOpt)]
 struct Opt {
@@ -21,11 +21,9 @@ struct Opt {
 }
 
 #[cfg(unix)]
-fn get_by_device(device: Device) -> Result<impl Interface> {
-    use futures::StreamExt;
-    use std::future::ready;
+fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
     use std::io;
-    use tokio_smoltcp::util::AsyncCapture;
+    use tokio_smoltcp::device::AsyncCapture;
 
     let cap = Capture::from_device(device.clone())
         .context("Failed to capture device")?
@@ -42,6 +40,9 @@ fn get_by_device(device: Device) -> Result<impl Interface> {
             other => io::Error::new(io::ErrorKind::Other, other),
         }
     }
+    let mut caps = DeviceCapabilities::default();
+    caps.max_burst_size = Some(100);
+    caps.max_transmission_unit = 1500;
 
     Ok(AsyncCapture::new(
         cap.setnonblock().context("Failed to set nonblock")?,
@@ -55,16 +56,18 @@ fn get_by_device(device: Device) -> Result<impl Interface> {
             // eprintln!("send {:?}", r);
             r
         },
+        caps,
     )
-    .context("Failed to create async capture")?
-    .take_while(|i| ready(i.is_ok()))
-    .map(|i| i.unwrap()))
+    .context("Failed to create async capture")?)
 }
 
 #[cfg(windows)]
-fn get_by_device(device: Device) -> Result<impl Interface> {
+fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
     use tokio::sync::mpsc::{Receiver, Sender};
-    use tokio_smoltcp::util::ChannelCapture;
+    use tokio_smoltcp::device::ChannelCapture;
+    let mut caps = DeviceCapabilities::default();
+    caps.max_burst_size = Some(100);
+    caps.max_transmission_unit = 1500;
 
     let mut cap = Capture::from_device(device.clone())
         .context("Failed to capture device")?
@@ -81,7 +84,7 @@ fn get_by_device(device: Device) -> Result<impl Interface> {
         .open()
         .context("Failed to open device")?;
 
-    let recv = move |tx: Sender<Vec<u8>>| loop {
+    let recv = move |tx: Sender<std::io::Result<Vec<u8>>>| loop {
         let p = match cap.next().map(|p| p.to_vec()) {
             Ok(p) => p,
             Err(pcap::Error::TimeoutExpired) => continue,
@@ -90,14 +93,14 @@ fn get_by_device(device: Device) -> Result<impl Interface> {
                 break;
             }
         };
-        tx.blocking_send(p).unwrap();
+        tx.blocking_send(Ok(p)).unwrap();
     };
     let send = move |mut rx: Receiver<Vec<u8>>| {
         while let Some(pkt) = rx.blocking_recv() {
             send.sendpacket(pkt).unwrap();
         }
     };
-    let capture = ChannelCapture::new(recv, send);
+    let capture = ChannelCapture::new(recv, send, caps);
     Ok(capture)
 }
 
@@ -110,8 +113,8 @@ async fn async_main(opt: Opt) -> Result<()> {
     let ip_addr: IpCidr = opt.ip_addr.parse().unwrap();
     let gateway: IpAddress = opt.gateway.parse().unwrap();
 
-    let device = FutureDevice::new(get_by_device(device)?, 1500);
-    let (net, fut) = Net::new(
+    let device = get_by_device(device)?;
+    let net = Net::new(
         device,
         NetConfig {
             ethernet_addr,
@@ -120,7 +123,6 @@ async fn async_main(opt: Opt) -> Result<()> {
             buffer_size: Default::default(),
         },
     );
-    tokio::spawn(fut);
 
     let udp = net.udp_bind("0.0.0.0:0".parse()?).await?;
     println!("udp local_addr {:?}", udp.local_addr());

@@ -1,7 +1,7 @@
 use super::{reactor::Reactor, socket_allocator::SocketHandle};
 use futures::future::{self, poll_fn};
 use futures::{ready, Stream};
-pub use smoltcp::socket::{self, AnySocket, SocketRef, TcpState};
+pub use smoltcp::socket::{self, AnySocket, Socket, TcpState};
 use smoltcp::wire::{IpAddress, IpEndpoint, IpProtocol, IpVersion};
 use std::mem::replace;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -14,6 +14,9 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
+/// A TCP socket server, listening for connections.
+///
+/// You can accept a new connection by using the accept method.
 pub struct TcpListener {
     handle: SocketHandle,
     reactor: Arc<Reactor>,
@@ -31,8 +34,7 @@ impl TcpListener {
     ) -> io::Result<TcpListener> {
         let handle = reactor.socket_allocator().new_tcp_socket();
         {
-            let mut set = reactor.socket_allocator().lock();
-            let mut socket = set.get::<socket::TcpSocket>(*handle);
+            let mut socket = reactor.get_socket::<socket::TcpSocket>(*handle);
             socket.listen(local_endpoint).map_err(map_err)?;
         }
 
@@ -46,19 +48,17 @@ impl TcpListener {
     pub fn poll_accept(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<io::Result<(TcpSocket, SocketAddr)>> {
-        let mut set = self.reactor.socket_allocator().lock();
-        let mut socket = set.get::<socket::TcpSocket>(*self.handle);
+    ) -> Poll<io::Result<(TcpStream, SocketAddr)>> {
+        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
 
         if socket.state() == TcpState::Established {
             drop(socket);
-            drop(set);
-            return Poll::Ready(Ok(TcpSocket::accept(self)?));
+            return Poll::Ready(Ok(TcpStream::accept(self)?));
         }
         socket.register_send_waker(cx.waker());
         Poll::Pending
     }
-    pub async fn accept(&mut self) -> io::Result<(TcpSocket, SocketAddr)> {
+    pub async fn accept(&mut self) -> io::Result<(TcpStream, SocketAddr)> {
         poll_fn(|cx| self.poll_accept(cx)).await
     }
     pub fn incoming(self) -> Incoming {
@@ -72,7 +72,7 @@ impl TcpListener {
 pub struct Incoming(TcpListener);
 
 impl Stream for Incoming {
-    type Item = io::Result<TcpSocket>;
+    type Item = io::Result<TcpStream>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let (tcp, _) = ready!(self.0.poll_accept(cx))?;
         Poll::Ready(Some(Ok(tcp)))
@@ -87,31 +87,31 @@ fn ep2sa(ep: &IpEndpoint) -> SocketAddr {
     }
 }
 
-pub struct TcpSocket {
+/// A TCP stream between a local and a remote socket.
+pub struct TcpStream {
     handle: SocketHandle,
     reactor: Arc<Reactor>,
     local_addr: SocketAddr,
     peer_addr: SocketAddr,
 }
 
-impl TcpSocket {
+impl TcpStream {
     pub(super) async fn connect(
         reactor: Arc<Reactor>,
         local_endpoint: IpEndpoint,
         remote_endpoint: IpEndpoint,
-    ) -> io::Result<TcpSocket> {
+    ) -> io::Result<TcpStream> {
         let handle = reactor.socket_allocator().new_tcp_socket();
-        {
-            let mut set = reactor.socket_allocator().lock();
-            let mut socket = set.get::<socket::TcpSocket>(*handle);
-            socket
-                .connect(remote_endpoint, local_endpoint)
-                .map_err(map_err)?;
-        }
+
+        reactor
+            .borrow_socket::<socket::TcpSocket, _, _>(*handle, |socket, ctx| {
+                socket.connect(ctx, remote_endpoint, local_endpoint)
+            })
+            .map_err(map_err)?;
 
         let local_addr = ep2sa(&local_endpoint);
         let peer_addr = ep2sa(&remote_endpoint);
-        let tcp = TcpSocket {
+        let tcp = TcpStream {
             handle,
             reactor,
             local_addr,
@@ -123,16 +123,15 @@ impl TcpSocket {
         Ok(tcp)
     }
 
-    fn accept(listener: &mut TcpListener) -> io::Result<(TcpSocket, SocketAddr)> {
+    fn accept(listener: &mut TcpListener) -> io::Result<(TcpStream, SocketAddr)> {
         let reactor = listener.reactor.clone();
         let new_handle = reactor.socket_allocator().new_tcp_socket();
-        let mut set = reactor.socket_allocator().lock();
         {
-            let mut new_socket = set.get::<socket::TcpSocket>(*new_handle);
+            let mut new_socket = reactor.get_socket::<socket::TcpSocket>(*new_handle);
             new_socket.listen(listener.local_addr).map_err(map_err)?;
         }
         let (peer_addr, local_addr) = {
-            let socket = set.get::<socket::TcpSocket>(*listener.handle);
+            let socket = reactor.get_socket::<socket::TcpSocket>(*listener.handle);
             (
                 ep2sa(&socket.remote_endpoint()),
                 ep2sa(&socket.local_endpoint()),
@@ -140,7 +139,7 @@ impl TcpSocket {
         };
 
         Ok((
-            TcpSocket {
+            TcpStream {
                 handle: replace(&mut listener.handle, new_handle),
                 reactor: reactor.clone(),
                 local_addr,
@@ -157,8 +156,7 @@ impl TcpSocket {
         Ok(self.peer_addr)
     }
     pub fn poll_connected(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut set = self.reactor.socket_allocator().lock();
-        let mut socket = set.get::<socket::TcpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
         if socket.state() == TcpState::Established {
             return Poll::Ready(Ok(()));
         }
@@ -167,14 +165,13 @@ impl TcpSocket {
     }
 }
 
-impl AsyncRead for TcpSocket {
+impl AsyncRead for TcpStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let mut set = self.reactor.socket_allocator().lock();
-        let mut socket = set.get::<socket::TcpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
         if !socket.may_recv() {
             return Poll::Ready(Ok(()));
         }
@@ -190,14 +187,13 @@ impl AsyncRead for TcpSocket {
     }
 }
 
-impl AsyncWrite for TcpSocket {
+impl AsyncWrite for TcpStream {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        let mut set = self.reactor.socket_allocator().lock();
-        let mut socket = set.get::<socket::TcpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
         if !socket.may_send() {
             return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
         }
@@ -210,8 +206,7 @@ impl AsyncWrite for TcpSocket {
         Poll::Pending
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        let mut set = self.reactor.socket_allocator().lock();
-        let mut socket = set.get::<socket::TcpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
         if socket.send_queue() == 0 {
             return Poll::Ready(Ok(()));
         }
@@ -219,8 +214,7 @@ impl AsyncWrite for TcpSocket {
         Poll::Pending
     }
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        let mut set = self.reactor.socket_allocator().lock();
-        let mut socket = set.get::<socket::TcpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
 
         if socket.is_open() {
             socket.close();
@@ -235,6 +229,7 @@ impl AsyncWrite for TcpSocket {
     }
 }
 
+/// A UDP socket.
 pub struct UdpSocket {
     handle: SocketHandle,
     reactor: Arc<Reactor>,
@@ -248,8 +243,7 @@ impl UdpSocket {
     ) -> io::Result<UdpSocket> {
         let handle = reactor.socket_allocator().new_udp_socket();
         {
-            let mut set = reactor.socket_allocator().lock();
-            let mut socket = set.get::<socket::UdpSocket>(*handle);
+            let mut socket = reactor.get_socket::<socket::UdpSocket>(*handle);
             socket.bind(local_endpoint).map_err(map_err)?;
         }
 
@@ -268,8 +262,7 @@ impl UdpSocket {
         buf: &[u8],
         target: SocketAddr,
     ) -> Poll<io::Result<usize>> {
-        let mut set = self.reactor.socket_allocator().lock();
-        let mut socket = set.get::<socket::UdpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<socket::UdpSocket>(*self.handle);
 
         match socket.send_slice(buf, target.into()) {
             // the buffer is full
@@ -294,8 +287,7 @@ impl UdpSocket {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<(usize, SocketAddr)>> {
-        let mut set = self.reactor.socket_allocator().lock();
-        let mut socket = set.get::<socket::UdpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<socket::UdpSocket>(*self.handle);
 
         match socket.recv_slice(buf) {
             // the buffer is empty
@@ -318,6 +310,7 @@ impl UdpSocket {
     }
 }
 
+/// A raw socket.
 pub struct RawSocket {
     handle: SocketHandle,
     reactor: Arc<Reactor>,
@@ -337,8 +330,7 @@ impl RawSocket {
     }
     /// Note that on multiple calls to a poll_* method in the send direction, only the Waker from the Context passed to the most recent call will be scheduled to receive a wakeup.
     pub fn poll_send(&self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
-        let mut set = self.reactor.socket_allocator().lock();
-        let mut socket = set.get::<socket::RawSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<socket::RawSocket>(*self.handle);
 
         match socket.send_slice(buf) {
             // the buffer is full
@@ -359,8 +351,7 @@ impl RawSocket {
     }
     /// Note that on multiple calls to a poll_* method in the recv direction, only the Waker from the Context passed to the most recent call will be scheduled to receive a wakeup.
     pub fn poll_recv(&self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
-        let mut set = self.reactor.socket_allocator().lock();
-        let mut socket = set.get::<socket::RawSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<socket::RawSocket>(*self.handle);
 
         match socket.recv_slice(buf) {
             // the buffer is empty
