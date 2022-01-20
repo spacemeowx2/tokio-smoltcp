@@ -51,6 +51,9 @@ pub struct Net {
 }
 
 impl Net {
+    /// Creates a new `Net` instance.
+    ///
+    /// You need to run the `Net` reactor in a separate tokio task.
     pub fn new<D: device::AsyncDevice + 'static>(
         device: D,
         config: NetConfig,
@@ -101,10 +104,12 @@ impl Net {
             })
             .unwrap()
     }
+    /// Creates a new TcpListener, which will be bound to the specified address.
     pub async fn tcp_bind(&self, addr: SocketAddr) -> io::Result<TcpListener> {
         let addr = self.set_address(addr);
         TcpListener::new(self.reactor.clone(), addr.into()).await
     }
+    /// Opens a TCP connection to a remote host.
     pub async fn tcp_connect(&self, addr: SocketAddr) -> io::Result<TcpStream> {
         TcpStream::connect(
             self.reactor.clone(),
@@ -113,10 +118,12 @@ impl Net {
         )
         .await
     }
+    /// This function will create a new UDP socket and attempt to bind it to the `addr` provided.
     pub async fn udp_bind(&self, addr: SocketAddr) -> io::Result<UdpSocket> {
         let addr = self.set_address(addr);
         UdpSocket::new(self.reactor.clone(), addr.into()).await
     }
+    /// Creates a new raw socket.
     pub async fn raw_socket(
         &self,
         ip_version: IpVersion,
