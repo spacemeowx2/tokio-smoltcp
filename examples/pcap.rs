@@ -114,7 +114,7 @@ async fn async_main(opt: Opt) -> Result<()> {
     let gateway: IpAddress = opt.gateway.parse().unwrap();
 
     let device = get_by_device(device)?;
-    let (net, fut) = Net::new(
+    let net = Net::new(
         device,
         NetConfig {
             ethernet_addr,
@@ -123,7 +123,6 @@ async fn async_main(opt: Opt) -> Result<()> {
             buffer_size: Default::default(),
         },
     );
-    tokio::spawn(fut);
 
     let udp = net.udp_bind("0.0.0.0:0".parse()?).await?;
     println!("udp local_addr {:?}", udp.local_addr());

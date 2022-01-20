@@ -52,9 +52,13 @@ pub struct Net {
 
 impl Net {
     /// Creates a new `Net` instance.
-    ///
-    /// You need to run the `Net` reactor in a separate tokio task.
-    pub fn new<D: device::AsyncDevice + 'static>(
+    pub fn new<D: device::AsyncDevice + 'static>(device: D, config: NetConfig) -> Net {
+        let (net, fut) = Self::new2(device, config);
+        tokio::spawn(fut);
+        net
+    }
+
+    fn new2<D: device::AsyncDevice + 'static>(
         device: D,
         config: NetConfig,
     ) -> (Net, impl Future<Output = io::Result<()>> + Send) {
