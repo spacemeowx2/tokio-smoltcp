@@ -6,7 +6,7 @@ use futures::{stream::iter, FutureExt, SinkExt, StreamExt};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use smoltcp::{
     iface::{Interface, SocketHandle},
-    socket::AnySocket,
+    socket::{AnySocket, Socket},
     time::{Duration, Instant},
 };
 use std::{collections::VecDeque, future::Future, io, sync::Arc};
@@ -128,5 +128,17 @@ impl Reactor {
     }
     pub fn notify(&self) {
         self.notify.notify_waiters();
+    }
+}
+
+impl Drop for Reactor {
+    fn drop(&mut self) {
+        for (_, socket) in self.interf.lock().sockets_mut() {
+            match socket {
+                Socket::Tcp(tcp) => tcp.close(),
+                Socket::Raw(_) => {}
+                Socket::Udp(udp) => udp.close(),
+            }
+        }
     }
 }

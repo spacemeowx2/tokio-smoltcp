@@ -1,16 +1,22 @@
 use futures::{Sink, Stream};
+pub use smoltcp::phy::DeviceCapabilities;
 use smoltcp::{
-    phy::{Device, DeviceCapabilities, RxToken, TxToken},
+    phy::{Device, RxToken, TxToken},
     time::Instant,
 };
 use std::{collections::VecDeque, io};
 
+/// Default value of `max_burst_size`.
 pub const DEFAULT_MAX_BURST_SIZE: usize = 100;
 
+/// A packet used in `AsyncDevice`.
 pub type Packet = Vec<u8>;
+
+/// A device that send and receive packets asynchronously.
 pub trait AsyncDevice:
     Stream<Item = io::Result<Packet>> + Sink<Packet, Error = io::Error> + Send + Unpin
 {
+    /// Returns the device capabilities.
     fn capabilities(&self) -> &DeviceCapabilities;
 }
 
@@ -21,7 +27,7 @@ pub(crate) struct BufferDevice {
     send_queue: VecDeque<Packet>,
 }
 
-pub struct BufferRxToken(Packet);
+pub(crate) struct BufferRxToken(Packet);
 
 impl RxToken for BufferRxToken {
     fn consume<R, F>(mut self, _timestamp: Instant, f: F) -> smoltcp::Result<R>
@@ -34,7 +40,7 @@ impl RxToken for BufferRxToken {
     }
 }
 
-pub struct BufferTxToken<'a>(&'a mut BufferDevice);
+pub(crate) struct BufferTxToken<'a>(&'a mut BufferDevice);
 
 impl<'d> TxToken for BufferTxToken<'d> {
     fn consume<R, F>(self, _timestamp: Instant, len: usize, f: F) -> smoltcp::Result<R>

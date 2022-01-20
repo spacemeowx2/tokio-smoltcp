@@ -10,6 +10,7 @@ use tokio_util::sync::PollSender;
 
 use crate::device::AsyncDevice;
 
+/// A device that send and receive packets using a channel.
 pub struct ChannelCapture {
     recv: Receiver<io::Result<Vec<u8>>>,
     send: PollSender<Vec<u8>>,
@@ -17,6 +18,9 @@ pub struct ChannelCapture {
 }
 
 impl ChannelCapture {
+    /// Make a new `ChannelCapture` with the given `recv` and `send` channels.
+    ///
+    /// The `caps` is used to determine the device capabilities. `DeviceCapabilities::max_transmission_unit` must be set.
     pub fn new<R, S>(recv: R, send: S, caps: DeviceCapabilities) -> Self
     where
         S: FnOnce(Receiver<Vec<u8>>) + Send + 'static,

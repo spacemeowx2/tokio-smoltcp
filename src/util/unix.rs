@@ -12,6 +12,8 @@ use tokio::io::{unix::AsyncFd, Interest};
 use crate::device::AsyncDevice;
 
 pin_project! {
+    /// A device that uses a Unix raw socket to send and receive packets.
+    /// The socket is created with the `O_NONBLOCK` flag set.
     pub struct AsyncCapture<T, R, S> {
         obj: T,
         recv: R,
@@ -29,6 +31,18 @@ where
     R: Fn(&mut T) -> io::Result<Vec<u8>>,
     S: Fn(&mut T, &[u8]) -> io::Result<()>,
 {
+    /// Make a new `AsyncCapture` with the given `obj` and `recv` and `send`
+    /// functions.
+    ///
+    ///
+    /// The `obj` is used to get the raw file descriptor.
+    ///
+    ///
+    /// The `recv` and `send` functions are used to read and write packets. They should
+    /// return Err(io::ErrorKind::WouldBlock) if the operation would block.
+    ///
+    ///
+    /// The `caps` is used to determine the device capabilities. `DeviceCapabilities::max_transmission_unit` must be set.
     pub fn new(obj: T, recv: R, send: S, caps: DeviceCapabilities) -> io::Result<Self> {
         let async_fd = AsyncFd::with_interest(obj.as_raw_fd(), Interest::READABLE)?;
         Ok(AsyncCapture {

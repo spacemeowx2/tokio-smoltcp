@@ -1,3 +1,5 @@
+//! An asynchronous wrapper for smoltcp.
+
 use std::{
     collections::BTreeMap,
     io,
@@ -17,16 +19,21 @@ use smoltcp::{
     phy::Medium,
     wire::{EthernetAddress, IpAddress, IpCidr, IpProtocol, IpVersion},
 };
-pub use socket::{RawSocket, TcpListener, TcpSocket, UdpSocket};
+pub use socket::{RawSocket, TcpListener, TcpStream, UdpSocket};
 pub use socket_allocator::BufferSize;
 use tokio::sync::Notify;
 
+/// The async device.
 pub mod device;
 mod reactor;
 mod socket;
 mod socket_allocator;
+/// Utilities for making devices.
 pub mod util;
 
+/// A config for a `Net`.
+///
+/// This is used to configure the `Net`.
 pub struct NetConfig {
     pub ethernet_addr: EthernetAddress,
     pub ip_addr: IpCidr,
@@ -34,6 +41,10 @@ pub struct NetConfig {
     pub buffer_size: BufferSize,
 }
 
+/// `Net` is the main interface to the network stack.
+/// Socket creation and configuration is done through the `Net` interface.
+///
+/// When `Net` is dropped, all sockets are closed and the network stack is stopped.
 pub struct Net {
     reactor: Arc<Reactor>,
     ip_addr: IpCidr,
@@ -96,8 +107,8 @@ impl Net {
         let addr = self.set_address(addr);
         TcpListener::new(self.reactor.clone(), addr.into()).await
     }
-    pub async fn tcp_connect(&self, addr: SocketAddr) -> io::Result<TcpSocket> {
-        TcpSocket::connect(
+    pub async fn tcp_connect(&self, addr: SocketAddr) -> io::Result<TcpStream> {
+        TcpStream::connect(
             self.reactor.clone(),
             (self.ip_addr.address(), self.get_port()).into(),
             addr.into(),

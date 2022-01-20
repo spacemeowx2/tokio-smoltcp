@@ -14,6 +14,9 @@ use std::{
 };
 use tokio::io::{AsyncRead, AsyncWrite, ReadBuf};
 
+/// A TCP socket server, listening for connections.
+///
+/// You can accept a new connection by using the accept method.
 pub struct TcpListener {
     handle: SocketHandle,
     reactor: Arc<Reactor>,
@@ -45,17 +48,17 @@ impl TcpListener {
     pub fn poll_accept(
         &mut self,
         cx: &mut Context<'_>,
-    ) -> Poll<io::Result<(TcpSocket, SocketAddr)>> {
+    ) -> Poll<io::Result<(TcpStream, SocketAddr)>> {
         let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
 
         if socket.state() == TcpState::Established {
             drop(socket);
-            return Poll::Ready(Ok(TcpSocket::accept(self)?));
+            return Poll::Ready(Ok(TcpStream::accept(self)?));
         }
         socket.register_send_waker(cx.waker());
         Poll::Pending
     }
-    pub async fn accept(&mut self) -> io::Result<(TcpSocket, SocketAddr)> {
+    pub async fn accept(&mut self) -> io::Result<(TcpStream, SocketAddr)> {
         poll_fn(|cx| self.poll_accept(cx)).await
     }
     pub fn incoming(self) -> Incoming {
@@ -69,7 +72,7 @@ impl TcpListener {
 pub struct Incoming(TcpListener);
 
 impl Stream for Incoming {
-    type Item = io::Result<TcpSocket>;
+    type Item = io::Result<TcpStream>;
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Option<Self::Item>> {
         let (tcp, _) = ready!(self.0.poll_accept(cx))?;
         Poll::Ready(Some(Ok(tcp)))
@@ -84,19 +87,20 @@ fn ep2sa(ep: &IpEndpoint) -> SocketAddr {
     }
 }
 
-pub struct TcpSocket {
+/// A TCP stream between a local and a remote socket.
+pub struct TcpStream {
     handle: SocketHandle,
     reactor: Arc<Reactor>,
     local_addr: SocketAddr,
     peer_addr: SocketAddr,
 }
 
-impl TcpSocket {
+impl TcpStream {
     pub(super) async fn connect(
         reactor: Arc<Reactor>,
         local_endpoint: IpEndpoint,
         remote_endpoint: IpEndpoint,
-    ) -> io::Result<TcpSocket> {
+    ) -> io::Result<TcpStream> {
         let handle = reactor.socket_allocator().new_tcp_socket();
 
         reactor
@@ -107,7 +111,7 @@ impl TcpSocket {
 
         let local_addr = ep2sa(&local_endpoint);
         let peer_addr = ep2sa(&remote_endpoint);
-        let tcp = TcpSocket {
+        let tcp = TcpStream {
             handle,
             reactor,
             local_addr,
@@ -119,7 +123,7 @@ impl TcpSocket {
         Ok(tcp)
     }
 
-    fn accept(listener: &mut TcpListener) -> io::Result<(TcpSocket, SocketAddr)> {
+    fn accept(listener: &mut TcpListener) -> io::Result<(TcpStream, SocketAddr)> {
         let reactor = listener.reactor.clone();
         let new_handle = reactor.socket_allocator().new_tcp_socket();
         {
@@ -135,7 +139,7 @@ impl TcpSocket {
         };
 
         Ok((
-            TcpSocket {
+            TcpStream {
                 handle: replace(&mut listener.handle, new_handle),
                 reactor: reactor.clone(),
                 local_addr,
@@ -161,7 +165,7 @@ impl TcpSocket {
     }
 }
 
-impl AsyncRead for TcpSocket {
+impl AsyncRead for TcpStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -183,7 +187,7 @@ impl AsyncRead for TcpSocket {
     }
 }
 
-impl AsyncWrite for TcpSocket {
+impl AsyncWrite for TcpStream {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -225,6 +229,7 @@ impl AsyncWrite for TcpSocket {
     }
 }
 
+/// A UDP socket.
 pub struct UdpSocket {
     handle: SocketHandle,
     reactor: Arc<Reactor>,
@@ -305,6 +310,7 @@ impl UdpSocket {
     }
 }
 
+/// A raw socket.
 pub struct RawSocket {
     handle: SocketHandle,
     reactor: Arc<Reactor>,

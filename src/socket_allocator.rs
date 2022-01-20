@@ -10,6 +10,7 @@ use std::ops::{Deref, DerefMut};
 
 use crate::reactor::BufferInterface;
 
+/// `BufferSize` is used to configure the size of the socket buffer.
 #[derive(Debug, Clone, Copy)]
 pub struct BufferSize {
     pub tcp_rx_size: usize,
