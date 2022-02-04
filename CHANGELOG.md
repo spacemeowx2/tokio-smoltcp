@@ -1,3 +1,7 @@
+# 0.2.1
+
+* Avoid compile errors when feature `medium-ieee802154` is enaboed.
+
 # 0.2.0
 
 * Upgrade `smoltcp` to v0.8

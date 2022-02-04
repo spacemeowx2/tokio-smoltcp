@@ -138,6 +138,8 @@ impl Drop for Reactor {
                 Socket::Tcp(tcp) => tcp.close(),
                 Socket::Raw(_) => {}
                 Socket::Udp(udp) => udp.close(),
+                #[allow(unreachable_patterns)]
+                _ => {}
             }
         }
     }

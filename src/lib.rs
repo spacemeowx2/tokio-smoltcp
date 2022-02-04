@@ -51,7 +51,7 @@ pub struct Net {
 }
 
 impl Net {
-    /// Creates a new `Net` instance.
+    /// Creates a new `Net` instance. It panics if the medium is not supported.
     pub fn new<D: device::AsyncDevice + 'static>(device: D, config: NetConfig) -> Net {
         let (net, fut) = Self::new2(device, config);
         tokio::spawn(fut);
@@ -87,6 +87,8 @@ impl Net {
                 .ip_addrs(vec![config.ip_addr.clone()])
                 .routes(routes)
                 .finalize(),
+            #[allow(unreachable_patterns)]
+            _ => panic!("Unsupported medium"),
         };
         let stopper = Arc::new(Notify::new());
         let (reactor, fut) = Reactor::new(device, interf, config.buffer_size, stopper.clone());
