@@ -27,6 +27,15 @@ pub trait AsyncDevice:
     fn capabilities(&self) -> &DeviceCapabilities;
 }
 
+impl<T> AsyncDevice for Box<T>
+where
+    T: AsyncDevice,
+{
+    fn capabilities(&self) -> &DeviceCapabilities {
+        (**self).capabilities()
+    }
+}
+
 pub(crate) struct BufferDevice {
     caps: DeviceCapabilities,
     max_burst_size: usize,

@@ -1,3 +1,7 @@
+# 0.2.2
+
+* impl AsyncDevice for `Box<dyn AsyncDevice>`
+
 # 0.2.1
 
 * Avoid compile errors when feature `medium-ieee802154` is enaboed.
