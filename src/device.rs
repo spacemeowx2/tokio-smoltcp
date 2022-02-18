@@ -121,6 +121,6 @@ impl BufferDevice {
         self.max_burst_size - self.recv_queue.len()
     }
     pub fn need_wait(&self) -> bool {
-        self.recv_queue.len() == 0
+        self.recv_queue.is_empty()
     }
 }

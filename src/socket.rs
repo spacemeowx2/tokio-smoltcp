@@ -179,6 +179,7 @@ impl AsyncRead for TcpStream {
             let read = socket
                 .recv_slice(buf.initialize_unfilled())
                 .map_err(map_err)?;
+            self.reactor.notify();
             buf.advance(read);
             return Poll::Ready(Ok(()));
         }
@@ -294,6 +295,7 @@ impl UdpSocket {
             Err(smoltcp::Error::Exhausted) => {}
             r => {
                 let (size, endpoint) = r.map_err(map_err)?;
+                self.reactor.notify();
                 return Poll::Ready(Ok((size, ep2sa(&endpoint))));
             }
         }

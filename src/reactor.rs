@@ -53,7 +53,7 @@ async fn run(
             .send_all(&mut iter(packets).map(|p| Ok(p)))
             .await?;
 
-        if interf.lock().device().need_wait() {
+        if recv_buf.is_empty() && interf.lock().device().need_wait() {
             let start = Instant::now();
             let deadline = { interf.lock().poll_delay(start).unwrap_or(default_timeout) };
 
