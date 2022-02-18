@@ -1,6 +1,10 @@
+# 0.2.3
+
+* Fixing low performance in the receiving direction.
+
 # 0.2.2
 
-* impl AsyncDevice for `Box<dyn AsyncDevice>`
+* impl AsyncDevice for `Box<dyn AsyncDevice>`.
 
 # 0.2.1
 
