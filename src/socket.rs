@@ -118,6 +118,7 @@ impl TcpStream {
             peer_addr,
         };
 
+        tcp.reactor.notify();
         future::poll_fn(|cx| tcp.poll_connected(cx)).await?;
 
         Ok(tcp)
