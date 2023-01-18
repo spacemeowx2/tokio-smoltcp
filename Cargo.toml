@@ -1,6 +1,6 @@
 [package]
 name = "tokio-smoltcp"
-version = "0.2.4"
+version = "0.3.0"
 authors = ["spacemeowx2 <spacemeowx2@gmail.com>"]
 edition = "2018"
 description = "An asynchronous wrapper for smoltcp."
@@ -15,8 +15,9 @@ license = "MIT OR Apache-2.0"
 futures = "0.3"
 pin-project-lite = "0.2.6"
 tokio = { version = "1.6.1", features = ["time", "rt"] }
-tokio-util = "0.6.7"
+tokio-util = "0.7.4"
 parking_lot = "0.12.0"
+managed = "0.8"
 
 [dependencies.smoltcp]
 version = "0.8.0"
@@ -34,7 +35,7 @@ features = [
 [dev-dependencies]
 tokio = { version = "1.0", features = ["full"] }
 anyhow = "1.0"
-pcap = "0.9.1"
+pcap = "1.0.0"
 structopt = "0.3"
 dns-parser = "0.8"
 

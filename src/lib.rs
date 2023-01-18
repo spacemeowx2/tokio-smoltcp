@@ -12,12 +12,14 @@ use std::{
 
 use device::BufferDevice;
 use futures::Future;
+use managed::ManagedMap;
 use reactor::Reactor;
 pub use smoltcp;
 use smoltcp::{
-    iface::{InterfaceBuilder, NeighborCache, Routes},
+    iface::{InterfaceBuilder, NeighborCache, Route, Routes},
     phy::Medium,
-    wire::{EthernetAddress, IpAddress, IpCidr, IpProtocol, IpVersion},
+    time::{Duration, Instant},
+    wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpProtocol, IpVersion},
 };
 pub use socket::{RawSocket, TcpListener, TcpStream, UdpSocket};
 pub use socket_allocator::BufferSize;
@@ -29,6 +31,17 @@ mod reactor;
 mod socket;
 mod socket_allocator;
 
+/// Can be used to create a forever timestamp in neighbor.
+// The 60_000 is the same as NeighborCache::ENTRY_LIFETIME.
+pub const FOREVER: Instant =
+    Instant::from_micros_const(i64::max_value() - Duration::from_millis(60_000).micros() as i64);
+
+pub struct Neighbor {
+    protocol_addr: IpAddress,
+    hardware_addr: HardwareAddress,
+    timestamp: Instant,
+}
+
 /// A config for a `Net`.
 ///
 /// This is used to configure the `Net`.
@@ -37,6 +50,7 @@ pub struct NetConfig {
     pub ip_addr: IpCidr,
     pub gateway: Vec<IpAddress>,
     pub buffer_size: BufferSize,
+    pub neighbor_cache: Vec<Neighbor>,
 }
 
 /// `Net` is the main interface to the network stack.
@@ -74,7 +88,10 @@ impl Net {
                 _ => panic!("Unsupported address"),
             };
         }
-        let neighbor_cache = NeighborCache::new(BTreeMap::new());
+        let mut neighbor_cache = NeighborCache::new(BTreeMap::new());
+        for n in config.neighbor_cache {
+            neighbor_cache.fill(n.protocol_addr, n.hardware_addr, n.timestamp);
+        }
         let buffer_device = BufferDevice::new(device.capabilities().clone());
         let interf = match device.capabilities().medium {
             Medium::Ethernet => InterfaceBuilder::new(buffer_device, vec![])
@@ -149,6 +166,13 @@ impl Net {
             addr.set_port(self.get_port());
         }
         addr
+    }
+
+    /// Updates the routes of the network stack.    
+    pub fn update_routes<F: FnOnce(&mut ManagedMap<'static, IpCidr, Route>)>(&self, f: F) {
+        let interf = self.reactor.interf().clone();
+        let mut interf = interf.lock();
+        interf.routes_mut().update(f);
     }
 }
 

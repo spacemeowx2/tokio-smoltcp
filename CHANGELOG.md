@@ -1,3 +1,9 @@
+# 0.3.0
+
+- Upgrade `tokio-util` to `0.7.4`, `pcap` to `1.0.0`
+- Allow routes to be updated at runtime
+- Allow to fill neighbor cache at initialization
+
 # 0.2.4
 
 - Fix reactor not working after tcp connect.

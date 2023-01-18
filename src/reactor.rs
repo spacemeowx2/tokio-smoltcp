@@ -129,6 +129,9 @@ impl Reactor {
     pub fn notify(&self) {
         self.notify.notify_waiters();
     }
+    pub fn interf(&self) -> &BufferInterface {
+        &self.interf
+    }
 }
 
 impl Drop for Reactor {

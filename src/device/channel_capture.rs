@@ -5,8 +5,8 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::sync::mpsc::{channel, error::SendError, Receiver, Sender};
-use tokio_util::sync::PollSender;
+use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio_util::sync::{PollSendError, PollSender};
 
 use crate::device::AsyncDevice;
 
@@ -52,7 +52,7 @@ impl Stream for ChannelCapture {
     }
 }
 
-fn map_err(e: SendError<Vec<u8>>) -> io::Error {
+fn map_err(e: PollSendError<Vec<u8>>) -> io::Error {
     io::Error::new(io::ErrorKind::Other, e)
 }
 
@@ -60,15 +60,15 @@ impl Sink<Vec<u8>> for ChannelCapture {
     type Error = io::Error;
 
     fn poll_ready(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.send.poll_send_done(cx).map_err(map_err)
+        self.send.poll_reserve(cx).map_err(map_err)
     }
 
     fn start_send(mut self: Pin<&mut Self>, item: Vec<u8>) -> Result<(), Self::Error> {
-        self.send.start_send(item).map_err(map_err)
+        self.send.send_item(item).map_err(map_err)
     }
 
     fn poll_flush(mut self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
-        self.send.poll_send_done(cx).map_err(map_err)
+        self.send.poll_reserve(cx).map_err(map_err)
     }
 
     fn poll_close(self: Pin<&mut Self>, _cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {

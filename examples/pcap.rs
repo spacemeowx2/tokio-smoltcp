@@ -47,7 +47,7 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
     Ok(AsyncCapture::new(
         cap.setnonblock().context("Failed to set nonblock")?,
         |d| {
-            let r = d.next().map_err(map_err).map(|p| p.to_vec());
+            let r = d.next_packet().map_err(map_err).map(|p| p.to_vec());
             // eprintln!("recv {:?}", r);
             r
         },
@@ -85,7 +85,7 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
         .context("Failed to open device")?;
 
     let recv = move |tx: Sender<std::io::Result<Vec<u8>>>| loop {
-        let p = match cap.next().map(|p| p.to_vec()) {
+        let p = match cap.next_packet().map(|p| p.to_vec()) {
             Ok(p) => p,
             Err(pcap::Error::TimeoutExpired) => continue,
             Err(e) => {
@@ -121,6 +121,7 @@ async fn async_main(opt: Opt) -> Result<()> {
             ip_addr,
             gateway: vec![gateway],
             buffer_size: Default::default(),
+            neighbor_cache: Default::default(),
         },
     );
 

@@ -36,14 +36,16 @@ where
     }
 }
 
-pub(crate) struct BufferDevice {
+/// A device that send and receive packets synchronously.
+pub struct BufferDevice {
     caps: DeviceCapabilities,
     max_burst_size: usize,
     recv_queue: VecDeque<Packet>,
     send_queue: VecDeque<Packet>,
 }
 
-pub(crate) struct BufferRxToken(Packet);
+/// RxToken for `BufferDevice`.
+pub struct BufferRxToken(Packet);
 
 impl RxToken for BufferRxToken {
     fn consume<R, F>(mut self, _timestamp: Instant, f: F) -> smoltcp::Result<R>
@@ -56,7 +58,8 @@ impl RxToken for BufferRxToken {
     }
 }
 
-pub(crate) struct BufferTxToken<'a>(&'a mut BufferDevice);
+/// TxToken for `BufferDevice`.
+pub struct BufferTxToken<'a>(&'a mut BufferDevice);
 
 impl<'d> TxToken for BufferTxToken<'d> {
     fn consume<R, F>(self, _timestamp: Instant, len: usize, f: F) -> smoltcp::Result<R>
@@ -99,7 +102,7 @@ impl<'a> Device<'a> for BufferDevice {
 }
 
 impl BufferDevice {
-    pub fn new(caps: DeviceCapabilities) -> BufferDevice {
+    pub(crate) fn new(caps: DeviceCapabilities) -> BufferDevice {
         let max_burst_size = caps.max_burst_size.unwrap_or(DEFAULT_MAX_BURST_SIZE);
         BufferDevice {
             caps,
@@ -108,19 +111,19 @@ impl BufferDevice {
             send_queue: VecDeque::with_capacity(max_burst_size),
         }
     }
-    pub fn take_send_queue(&mut self) -> VecDeque<Packet> {
+    pub(crate) fn take_send_queue(&mut self) -> VecDeque<Packet> {
         std::mem::replace(
             &mut self.send_queue,
             VecDeque::with_capacity(self.max_burst_size),
         )
     }
-    pub fn push_recv_queue(&mut self, p: impl Iterator<Item = Packet>) {
+    pub(crate) fn push_recv_queue(&mut self, p: impl Iterator<Item = Packet>) {
         self.recv_queue.extend(p.take(self.avaliable_recv_queue()));
     }
-    pub fn avaliable_recv_queue(&self) -> usize {
+    pub(crate) fn avaliable_recv_queue(&self) -> usize {
         self.max_burst_size - self.recv_queue.len()
     }
-    pub fn need_wait(&self) -> bool {
+    pub(crate) fn need_wait(&self) -> bool {
         self.recv_queue.is_empty()
     }
 }
