@@ -1,3 +1,7 @@
+# 0.3.1
+
+- fix: the fields of Neighbor should be public
+
 # 0.3.0
 
 - Upgrade `tokio-util` to `0.7.4`, `pcap` to `1.0.0`

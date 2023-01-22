@@ -37,9 +37,9 @@ pub const FOREVER: Instant =
     Instant::from_micros_const(i64::max_value() - Duration::from_millis(60_000).micros() as i64);
 
 pub struct Neighbor {
-    protocol_addr: IpAddress,
-    hardware_addr: HardwareAddress,
-    timestamp: Instant,
+    pub protocol_addr: IpAddress,
+    pub hardware_addr: HardwareAddress,
+    pub timestamp: Instant,
 }
 
 /// A config for a `Net`.
