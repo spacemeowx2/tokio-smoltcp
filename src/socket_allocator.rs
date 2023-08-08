@@ -1,14 +1,13 @@
+use parking_lot::Mutex;
 use smoltcp::{
-    iface::SocketHandle as InnerSocketHandle,
-    socket::{
-        RawPacketMetadata, RawSocket, RawSocketBuffer, TcpSocket, TcpSocketBuffer,
-        UdpPacketMetadata, UdpSocket, UdpSocketBuffer,
-    },
+    iface::{SocketHandle as InnerSocketHandle, SocketSet},
+    socket::{raw, tcp, udp},
     wire::{IpProtocol, IpVersion},
 };
-use std::ops::{Deref, DerefMut};
-
-use crate::reactor::BufferInterface;
+use std::{
+    ops::{Deref, DerefMut},
+    sync::Arc,
+};
 
 /// `BufferSize` is used to configure the size of the socket buffer.
 #[derive(Debug, Clone, Copy)]
@@ -42,47 +41,57 @@ impl Default for BufferSize {
     }
 }
 
+type SharedSocketSet = Arc<Mutex<SocketSet<'static>>>;
+
+#[derive(Clone)]
 pub struct SocketAlloctor {
-    iface: BufferInterface,
+    sockets: SharedSocketSet,
     buffer_size: BufferSize,
 }
 
 impl SocketAlloctor {
-    pub(crate) fn new(iface: BufferInterface, buffer_size: BufferSize) -> SocketAlloctor {
-        SocketAlloctor { iface, buffer_size }
+    pub(crate) fn new(buffer_size: BufferSize) -> SocketAlloctor {
+        let sockets = Arc::new(Mutex::new(SocketSet::new(Vec::new())));
+        SocketAlloctor {
+            sockets,
+            buffer_size,
+        }
+    }
+    pub(crate) fn sockets(&self) -> &SharedSocketSet {
+        &self.sockets
     }
     pub fn new_tcp_socket(&self) -> SocketHandle {
-        let mut set = self.iface.lock();
-        let handle = set.add_socket(self.alloc_tcp_socket());
-        SocketHandle::new(handle, self.iface.clone())
+        let mut set = self.sockets.lock();
+        let handle = set.add(self.alloc_tcp_socket());
+        SocketHandle::new(handle, self.sockets.clone())
     }
     pub fn new_udp_socket(&self) -> SocketHandle {
-        let mut set = self.iface.lock();
-        let handle = set.add_socket(self.alloc_udp_socket());
-        SocketHandle::new(handle, self.iface.clone())
+        let mut set = self.sockets.lock();
+        let handle = set.add(self.alloc_udp_socket());
+        SocketHandle::new(handle, self.sockets.clone())
     }
     pub fn new_raw_socket(&self, ip_version: IpVersion, ip_protocol: IpProtocol) -> SocketHandle {
-        let mut set = self.iface.lock();
-        let handle = set.add_socket(self.alloc_raw_socket(ip_version, ip_protocol));
-        SocketHandle::new(handle, self.iface.clone())
+        let mut set = self.sockets.lock();
+        let handle = set.add(self.alloc_raw_socket(ip_version, ip_protocol));
+        SocketHandle::new(handle, self.sockets.clone())
     }
-    fn alloc_tcp_socket(&self) -> TcpSocket<'static> {
-        let rx_buffer = TcpSocketBuffer::new(vec![0; self.buffer_size.tcp_rx_size]);
-        let tx_buffer = TcpSocketBuffer::new(vec![0; self.buffer_size.tcp_tx_size]);
-        let tcp = TcpSocket::new(rx_buffer, tx_buffer);
+    fn alloc_tcp_socket(&self) -> tcp::Socket<'static> {
+        let rx_buffer = tcp::SocketBuffer::new(vec![0; self.buffer_size.tcp_rx_size]);
+        let tx_buffer = tcp::SocketBuffer::new(vec![0; self.buffer_size.tcp_tx_size]);
+        let tcp = tcp::Socket::new(rx_buffer, tx_buffer);
 
         tcp
     }
-    fn alloc_udp_socket(&self) -> UdpSocket<'static> {
-        let rx_buffer = UdpSocketBuffer::new(
-            vec![UdpPacketMetadata::EMPTY; self.buffer_size.udp_rx_meta_size],
+    fn alloc_udp_socket(&self) -> udp::Socket<'static> {
+        let rx_buffer = udp::PacketBuffer::new(
+            vec![udp::PacketMetadata::EMPTY; self.buffer_size.udp_rx_meta_size],
             vec![0; self.buffer_size.udp_rx_size],
         );
-        let tx_buffer = UdpSocketBuffer::new(
-            vec![UdpPacketMetadata::EMPTY; self.buffer_size.udp_tx_meta_size],
+        let tx_buffer = udp::PacketBuffer::new(
+            vec![udp::PacketMetadata::EMPTY; self.buffer_size.udp_tx_meta_size],
             vec![0; self.buffer_size.udp_tx_size],
         );
-        let udp = UdpSocket::new(rx_buffer, tx_buffer);
+        let udp = udp::Socket::new(rx_buffer, tx_buffer);
 
         udp
     }
@@ -90,33 +99,33 @@ impl SocketAlloctor {
         &self,
         ip_version: IpVersion,
         ip_protocol: IpProtocol,
-    ) -> RawSocket<'static> {
-        let rx_buffer = RawSocketBuffer::new(
-            vec![RawPacketMetadata::EMPTY; self.buffer_size.raw_rx_meta_size],
+    ) -> raw::Socket<'static> {
+        let rx_buffer = raw::PacketBuffer::new(
+            vec![raw::PacketMetadata::EMPTY; self.buffer_size.raw_rx_meta_size],
             vec![0; self.buffer_size.raw_rx_size],
         );
-        let tx_buffer = RawSocketBuffer::new(
-            vec![RawPacketMetadata::EMPTY; self.buffer_size.raw_tx_meta_size],
+        let tx_buffer = raw::PacketBuffer::new(
+            vec![raw::PacketMetadata::EMPTY; self.buffer_size.raw_tx_meta_size],
             vec![0; self.buffer_size.raw_tx_size],
         );
-        let raw = RawSocket::new(ip_version, ip_protocol, rx_buffer, tx_buffer);
+        let raw = raw::Socket::new(ip_version, ip_protocol, rx_buffer, tx_buffer);
 
         raw
     }
 }
 
-pub struct SocketHandle(InnerSocketHandle, BufferInterface);
+pub struct SocketHandle(InnerSocketHandle, SharedSocketSet);
 
 impl SocketHandle {
-    fn new(inner: InnerSocketHandle, iface: BufferInterface) -> SocketHandle {
-        SocketHandle(inner, iface)
+    fn new(inner: InnerSocketHandle, set: SharedSocketSet) -> SocketHandle {
+        SocketHandle(inner, set)
     }
 }
 
 impl Drop for SocketHandle {
     fn drop(&mut self) {
         let mut iface = self.1.lock();
-        iface.remove_socket(self.0);
+        iface.remove(self.0);
     }
 }
 

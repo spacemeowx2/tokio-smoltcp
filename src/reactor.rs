@@ -5,20 +5,20 @@ use crate::{
 use futures::{stream::iter, FutureExt, SinkExt, StreamExt};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use smoltcp::{
-    iface::{Interface, SocketHandle},
+    iface::{Context, Interface, SocketHandle},
     socket::{AnySocket, Socket},
     time::{Duration, Instant},
 };
 use std::{collections::VecDeque, future::Future, io, sync::Arc};
 use tokio::{pin, select, sync::Notify, time::sleep};
 
-pub(crate) type BufferInterface = Arc<Mutex<Interface<'static, BufferDevice>>>;
+pub(crate) type BufferInterface = Arc<Mutex<Interface>>;
 const MAX_BURST_SIZE: usize = 100;
 
 pub(crate) struct Reactor {
     notify: Arc<Notify>,
-    interf: BufferInterface,
-    socket_allocator: Arc<SocketAlloctor>,
+    iface: BufferInterface,
+    socket_allocator: SocketAlloctor,
 }
 
 async fn receive(
@@ -33,7 +33,9 @@ async fn receive(
 
 async fn run(
     mut async_iface: impl crate::device::AsyncDevice,
-    interf: BufferInterface,
+    iface: BufferInterface,
+    mut device: BufferDevice,
+    socket_allocator: SocketAlloctor,
     notify: Arc<Notify>,
     stopper: Arc<Notify>,
 ) -> io::Result<()> {
@@ -47,15 +49,20 @@ async fn run(
     pin!(timer);
 
     loop {
-        let packets = interf.lock().device_mut().take_send_queue();
+        let packets = device.take_send_queue();
 
         async_iface
             .send_all(&mut iter(packets).map(|p| Ok(p)))
             .await?;
 
-        if recv_buf.is_empty() && interf.lock().device().need_wait() {
+        if recv_buf.is_empty() && device.need_wait() {
             let start = Instant::now();
-            let deadline = { interf.lock().poll_delay(start).unwrap_or(default_timeout) };
+            let deadline = {
+                iface
+                    .lock()
+                    .poll_delay(start, &socket_allocator.sockets().lock())
+                    .unwrap_or(default_timeout)
+            };
 
             timer
                 .as_mut()
@@ -75,15 +82,15 @@ async fn run(
             }
         }
 
-        let mut interf = interf.lock();
-        let dev = interf.device_mut();
+        let mut iface = iface.lock();
 
-        dev.push_recv_queue(recv_buf.drain(..dev.avaliable_recv_queue().min(recv_buf.len())));
+        device.push_recv_queue(recv_buf.drain(..device.avaliable_recv_queue().min(recv_buf.len())));
 
-        while !matches!(
-            interf.poll(Instant::now()),
-            Ok(_) | Err(smoltcp::Error::Exhausted)
-        ) {}
+        iface.poll(
+            Instant::now(),
+            &mut device,
+            &mut socket_allocator.sockets().lock(),
+        );
     }
 
     Ok(())
@@ -92,19 +99,28 @@ async fn run(
 impl Reactor {
     pub fn new(
         async_device: impl crate::device::AsyncDevice,
-        interf: Interface<'static, BufferDevice>,
+        iface: Interface,
+        device: BufferDevice,
         buffer_size: BufferSize,
         stopper: Arc<Notify>,
     ) -> (Self, impl Future<Output = io::Result<()>> + Send) {
-        let interf = Arc::new(Mutex::new(interf));
+        let iface = Arc::new(Mutex::new(iface));
         let notify = Arc::new(Notify::new());
-        let fut = run(async_device, interf.clone(), notify.clone(), stopper);
+        let socket_allocator = SocketAlloctor::new(buffer_size);
+        let fut = run(
+            async_device,
+            iface.clone(),
+            device,
+            socket_allocator.clone(),
+            notify.clone(),
+            stopper,
+        );
 
         (
             Reactor {
                 notify,
-                interf: interf.clone(),
-                socket_allocator: Arc::new(SocketAlloctor::new(interf, buffer_size)),
+                iface: iface.clone(),
+                socket_allocator,
             },
             fut,
         )
@@ -113,30 +129,28 @@ impl Reactor {
         &self,
         handle: SocketHandle,
     ) -> MappedMutexGuard<'_, T> {
-        MutexGuard::map(self.interf.lock(), |interf| interf.get_socket::<T>(handle))
+        MutexGuard::map(
+            self.socket_allocator.sockets().lock(),
+            |sockets: &mut smoltcp::iface::SocketSet<'_>| sockets.get_mut::<T>(handle),
+        )
     }
-    pub fn borrow_socket<T: AnySocket<'static>, F, R>(&self, handle: SocketHandle, cb: F) -> R
-    where
-        F: FnOnce(&mut T, &mut smoltcp::iface::Context) -> R,
-    {
-        let mut interf = self.interf.lock();
-        let (socket, ctx) = interf.get_socket_and_context::<T>(handle);
-        cb(socket, ctx)
+    pub fn context(&self) -> MappedMutexGuard<'_, Context> {
+        MutexGuard::map(self.iface.lock(), |iface| iface.context())
     }
-    pub fn socket_allocator(&self) -> &Arc<SocketAlloctor> {
+    pub fn socket_allocator(&self) -> &SocketAlloctor {
         &self.socket_allocator
     }
     pub fn notify(&self) {
         self.notify.notify_waiters();
     }
-    pub fn interf(&self) -> &BufferInterface {
-        &self.interf
+    pub fn iface(&self) -> &BufferInterface {
+        &self.iface
     }
 }
 
 impl Drop for Reactor {
     fn drop(&mut self) {
-        for (_, socket) in self.interf.lock().sockets_mut() {
+        for (_, socket) in self.socket_allocator.sockets().lock().iter_mut() {
             match socket {
                 Socket::Tcp(tcp) => tcp.close(),
                 Socket::Raw(_) => {}

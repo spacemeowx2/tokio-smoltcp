@@ -7,7 +7,7 @@ use smoltcp::{
 };
 use structopt::StructOpt;
 use tokio::io::{copy, split, AsyncReadExt, AsyncWriteExt};
-use tokio_smoltcp::{device::AsyncDevice, Net, NetConfig};
+use tokio_smoltcp::{device::AsyncDevice, smoltcp::iface, Net, NetConfig};
 
 #[derive(Debug, StructOpt)]
 struct Opt {
@@ -114,15 +114,11 @@ async fn async_main(opt: Opt) -> Result<()> {
     let gateway: IpAddress = opt.gateway.parse().unwrap();
 
     let device = get_by_device(device)?;
+    let mut interface_config = iface::Config::new(ethernet_addr.into());
+    interface_config.random_seed = rand::random();
     let net = Net::new(
         device,
-        NetConfig {
-            ethernet_addr,
-            ip_addr,
-            gateway: vec![gateway],
-            buffer_size: Default::default(),
-            neighbor_cache: Default::default(),
-        },
+        NetConfig::new(interface_config, ip_addr, vec![gateway]),
     );
 
     let udp = net.udp_bind("0.0.0.0:0".parse()?).await?;

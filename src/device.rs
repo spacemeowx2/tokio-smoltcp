@@ -48,9 +48,9 @@ pub struct BufferDevice {
 pub struct BufferRxToken(Packet);
 
 impl RxToken for BufferRxToken {
-    fn consume<R, F>(mut self, _timestamp: Instant, f: F) -> smoltcp::Result<R>
+    fn consume<R, F>(mut self, f: F) -> R
     where
-        F: FnOnce(&mut [u8]) -> smoltcp::Result<R>,
+        F: FnOnce(&mut [u8]) -> R,
     {
         let p = &mut self.0;
         let result = f(p);
@@ -62,33 +62,33 @@ impl RxToken for BufferRxToken {
 pub struct BufferTxToken<'a>(&'a mut BufferDevice);
 
 impl<'d> TxToken for BufferTxToken<'d> {
-    fn consume<R, F>(self, _timestamp: Instant, len: usize, f: F) -> smoltcp::Result<R>
+    fn consume<R, F>(self, len: usize, f: F) -> R
     where
-        F: FnOnce(&mut [u8]) -> smoltcp::Result<R>,
+        F: FnOnce(&mut [u8]) -> R,
     {
         let mut buffer = vec![0u8; len];
         let result = f(&mut buffer);
 
-        if result.is_ok() {
-            self.0.send_queue.push_back(buffer);
-        }
+        self.0.send_queue.push_back(buffer);
 
         result
     }
 }
 
-impl<'a> Device<'a> for BufferDevice {
-    type RxToken = BufferRxToken;
-    type TxToken = BufferTxToken<'a>;
+impl Device for BufferDevice {
+    type RxToken<'a> = BufferRxToken
+        where Self:'a;
+    type TxToken<'a> = BufferTxToken<'a>
+        where Self:'a;
 
-    fn receive(&'a mut self) -> Option<(Self::RxToken, Self::TxToken)> {
+    fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
         match self.recv_queue.pop_front() {
             Some(p) => Some((BufferRxToken(p), BufferTxToken(self))),
             None => None,
         }
     }
 
-    fn transmit(&'a mut self) -> Option<Self::TxToken> {
+    fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {
         if self.send_queue.len() < self.max_burst_size {
             Some(BufferTxToken(self))
         } else {

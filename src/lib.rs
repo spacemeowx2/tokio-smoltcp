@@ -1,7 +1,6 @@
 //! An asynchronous wrapper for smoltcp.
 
 use std::{
-    collections::BTreeMap,
     io,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::{
@@ -12,14 +11,12 @@ use std::{
 
 use device::BufferDevice;
 use futures::Future;
-use managed::ManagedMap;
 use reactor::Reactor;
 pub use smoltcp;
 use smoltcp::{
-    iface::{InterfaceBuilder, NeighborCache, Route, Routes},
-    phy::Medium,
+    iface::{Config, Interface, Routes},
     time::{Duration, Instant},
-    wire::{EthernetAddress, HardwareAddress, IpAddress, IpCidr, IpProtocol, IpVersion},
+    wire::{HardwareAddress, IpAddress, IpCidr, IpProtocol, IpVersion},
 };
 pub use socket::{RawSocket, TcpListener, TcpStream, UdpSocket};
 pub use socket_allocator::BufferSize;
@@ -45,12 +42,23 @@ pub struct Neighbor {
 /// A config for a `Net`.
 ///
 /// This is used to configure the `Net`.
+#[non_exhaustive]
 pub struct NetConfig {
-    pub ethernet_addr: EthernetAddress,
+    pub interface_config: Config,
     pub ip_addr: IpCidr,
     pub gateway: Vec<IpAddress>,
     pub buffer_size: BufferSize,
-    pub neighbor_cache: Vec<Neighbor>,
+}
+
+impl NetConfig {
+    pub fn new(interface_config: Config, ip_addr: IpCidr, gateway: Vec<IpAddress>) -> Self {
+        Self {
+            interface_config,
+            ip_addr,
+            gateway,
+            buffer_size: Default::default(),
+        }
+    }
 }
 
 /// `Net` is the main interface to the network stack.
@@ -76,39 +84,33 @@ impl Net {
         device: D,
         config: NetConfig,
     ) -> (Net, impl Future<Output = io::Result<()>> + Send) {
-        let mut routes = Routes::new(BTreeMap::new());
+        let mut buffer_device = BufferDevice::new(device.capabilities().clone());
+        let mut iface = Interface::new(config.interface_config, &mut buffer_device, Instant::now());
+        let ip_addr = config.ip_addr;
+        iface.update_ip_addrs(|ip_addrs| {
+            ip_addrs.push(ip_addr).unwrap();
+        });
         for gateway in config.gateway {
             match gateway {
                 IpAddress::Ipv4(v4) => {
-                    routes.add_default_ipv4_route(v4).unwrap();
+                    iface.routes_mut().add_default_ipv4_route(v4).unwrap();
                 }
                 IpAddress::Ipv6(v6) => {
-                    routes.add_default_ipv6_route(v6).unwrap();
+                    iface.routes_mut().add_default_ipv6_route(v6).unwrap();
                 }
+                #[allow(unreachable_patterns)]
                 _ => panic!("Unsupported address"),
             };
         }
-        let mut neighbor_cache = NeighborCache::new(BTreeMap::new());
-        for n in config.neighbor_cache {
-            neighbor_cache.fill(n.protocol_addr, n.hardware_addr, n.timestamp);
-        }
-        let buffer_device = BufferDevice::new(device.capabilities().clone());
-        let interf = match device.capabilities().medium {
-            Medium::Ethernet => InterfaceBuilder::new(buffer_device, vec![])
-                .hardware_addr(config.ethernet_addr.into())
-                .neighbor_cache(neighbor_cache)
-                .ip_addrs(vec![config.ip_addr.clone()])
-                .routes(routes)
-                .finalize(),
-            Medium::Ip => InterfaceBuilder::new(buffer_device, vec![])
-                .ip_addrs(vec![config.ip_addr.clone()])
-                .routes(routes)
-                .finalize(),
-            #[allow(unreachable_patterns)]
-            _ => panic!("Unsupported medium"),
-        };
+
         let stopper = Arc::new(Notify::new());
-        let (reactor, fut) = Reactor::new(device, interf, config.buffer_size, stopper.clone());
+        let (reactor, fut) = Reactor::new(
+            device,
+            iface,
+            buffer_device,
+            config.buffer_size,
+            stopper.clone(),
+        );
 
         (
             Net {
@@ -159,6 +161,7 @@ impl Net {
             addr.set_ip(match self.ip_addr.address() {
                 IpAddress::Ipv4(ip) => Ipv4Addr::from(ip).into(),
                 IpAddress::Ipv6(ip) => Ipv6Addr::from(ip).into(),
+                #[allow(unreachable_patterns)]
                 _ => panic!("address must not be unspecified"),
             });
         }
@@ -168,11 +171,18 @@ impl Net {
         addr
     }
 
-    /// Updates the routes of the network stack.    
-    pub fn update_routes<F: FnOnce(&mut ManagedMap<'static, IpCidr, Route>)>(&self, f: F) {
-        let interf = self.reactor.interf().clone();
-        let mut interf = interf.lock();
-        interf.routes_mut().update(f);
+    pub fn routes<F: FnOnce(&Routes)>(&self, f: F) {
+        let iface = self.reactor.iface().clone();
+        let iface = iface.lock();
+        let routes = iface.routes();
+        f(routes)
+    }
+
+    pub fn routes_mut<F: FnOnce(&mut Routes)>(&self, f: F) {
+        let iface = self.reactor.iface().clone();
+        let mut iface = iface.lock();
+        let routes = iface.routes_mut();
+        f(routes)
     }
 }
 

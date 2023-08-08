@@ -1,7 +1,7 @@
 use super::{reactor::Reactor, socket_allocator::SocketHandle};
 use futures::future::{self, poll_fn};
 use futures::{ready, Stream};
-pub use smoltcp::socket::{self, AnySocket, Socket, TcpState};
+pub use smoltcp::socket::{raw, tcp, udp, AnySocket, Socket};
 use smoltcp::wire::{IpAddress, IpEndpoint, IpProtocol, IpVersion};
 use std::mem::replace;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
@@ -23,7 +23,7 @@ pub struct TcpListener {
     local_addr: SocketAddr,
 }
 
-fn map_err(e: smoltcp::Error) -> io::Error {
+fn map_err<E: std::error::Error>(e: E) -> io::Error {
     io::Error::new(io::ErrorKind::Other, e.to_string())
 }
 
@@ -34,7 +34,7 @@ impl TcpListener {
     ) -> io::Result<TcpListener> {
         let handle = reactor.socket_allocator().new_tcp_socket();
         {
-            let mut socket = reactor.get_socket::<socket::TcpSocket>(*handle);
+            let mut socket = reactor.get_socket::<tcp::Socket>(*handle);
             socket.listen(local_endpoint).map_err(map_err)?;
         }
 
@@ -49,9 +49,9 @@ impl TcpListener {
         &mut self,
         cx: &mut Context<'_>,
     ) -> Poll<io::Result<(TcpStream, SocketAddr)>> {
-        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<tcp::Socket>(*self.handle);
 
-        if socket.state() == TcpState::Established {
+        if socket.state() == tcp::State::Established {
             drop(socket);
             return Poll::Ready(Ok(TcpStream::accept(self)?));
         }
@@ -83,6 +83,7 @@ fn ep2sa(ep: &IpEndpoint) -> SocketAddr {
     match ep.addr {
         IpAddress::Ipv4(v4) => SocketAddr::new(IpAddr::V4(Ipv4Addr::from(v4)), ep.port),
         IpAddress::Ipv6(v6) => SocketAddr::new(IpAddr::V6(Ipv6Addr::from(v6)), ep.port),
+        #[allow(unreachable_patterns)]
         _ => unreachable!(),
     }
 }
@@ -104,9 +105,8 @@ impl TcpStream {
         let handle = reactor.socket_allocator().new_tcp_socket();
 
         reactor
-            .borrow_socket::<socket::TcpSocket, _, _>(*handle, |socket, ctx| {
-                socket.connect(ctx, remote_endpoint, local_endpoint)
-            })
+            .get_socket::<tcp::Socket>(*handle)
+            .connect(&mut reactor.context(), remote_endpoint, local_endpoint)
             .map_err(map_err)?;
 
         let local_addr = ep2sa(&local_endpoint);
@@ -128,14 +128,15 @@ impl TcpStream {
         let reactor = listener.reactor.clone();
         let new_handle = reactor.socket_allocator().new_tcp_socket();
         {
-            let mut new_socket = reactor.get_socket::<socket::TcpSocket>(*new_handle);
+            let mut new_socket = reactor.get_socket::<tcp::Socket>(*new_handle);
             new_socket.listen(listener.local_addr).map_err(map_err)?;
         }
         let (peer_addr, local_addr) = {
-            let socket = reactor.get_socket::<socket::TcpSocket>(*listener.handle);
+            let socket = reactor.get_socket::<tcp::Socket>(*listener.handle);
             (
-                ep2sa(&socket.remote_endpoint()),
-                ep2sa(&socket.local_endpoint()),
+                // should be Some, because the state is Established
+                ep2sa(&socket.remote_endpoint().unwrap()),
+                ep2sa(&socket.local_endpoint().unwrap()),
             )
         };
 
@@ -157,8 +158,8 @@ impl TcpStream {
         Ok(self.peer_addr)
     }
     pub fn poll_connected(&self, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
-        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
-        if socket.state() == TcpState::Established {
+        let mut socket = self.reactor.get_socket::<tcp::Socket>(*self.handle);
+        if socket.state() == tcp::State::Established {
             return Poll::Ready(Ok(()));
         }
         socket.register_send_waker(cx.waker());
@@ -172,7 +173,7 @@ impl AsyncRead for TcpStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<tcp::Socket>(*self.handle);
         if !socket.may_recv() {
             return Poll::Ready(Ok(()));
         }
@@ -195,7 +196,7 @@ impl AsyncWrite for TcpStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<Result<usize, io::Error>> {
-        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<tcp::Socket>(*self.handle);
         if !socket.may_send() {
             return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
         }
@@ -208,7 +209,7 @@ impl AsyncWrite for TcpStream {
         Poll::Pending
     }
     fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<tcp::Socket>(*self.handle);
         if socket.send_queue() == 0 {
             return Poll::Ready(Ok(()));
         }
@@ -216,13 +217,13 @@ impl AsyncWrite for TcpStream {
         Poll::Pending
     }
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Result<(), io::Error>> {
-        let mut socket = self.reactor.get_socket::<socket::TcpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<tcp::Socket>(*self.handle);
 
         if socket.is_open() {
             socket.close();
             self.reactor.notify();
         }
-        if socket.state() == TcpState::Closed {
+        if socket.state() == tcp::State::Closed {
             return Poll::Ready(Ok(()));
         }
 
@@ -245,7 +246,7 @@ impl UdpSocket {
     ) -> io::Result<UdpSocket> {
         let handle = reactor.socket_allocator().new_udp_socket();
         {
-            let mut socket = reactor.get_socket::<socket::UdpSocket>(*handle);
+            let mut socket = reactor.get_socket::<udp::Socket>(*handle);
             socket.bind(local_endpoint).map_err(map_err)?;
         }
 
@@ -264,11 +265,12 @@ impl UdpSocket {
         buf: &[u8],
         target: SocketAddr,
     ) -> Poll<io::Result<usize>> {
-        let mut socket = self.reactor.get_socket::<socket::UdpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<udp::Socket>(*self.handle);
+        let target_ip: IpEndpoint = target.into();
 
-        match socket.send_slice(buf, target.into()) {
+        match socket.send_slice(buf, target_ip) {
             // the buffer is full
-            Err(smoltcp::Error::Truncated) | Err(smoltcp::Error::Exhausted) => {}
+            Err(udp::SendError::BufferFull) => {}
             r => {
                 r.map_err(map_err)?;
                 self.reactor.notify();
@@ -289,15 +291,15 @@ impl UdpSocket {
         cx: &mut Context<'_>,
         buf: &mut [u8],
     ) -> Poll<io::Result<(usize, SocketAddr)>> {
-        let mut socket = self.reactor.get_socket::<socket::UdpSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<udp::Socket>(*self.handle);
 
         match socket.recv_slice(buf) {
             // the buffer is empty
-            Err(smoltcp::Error::Exhausted) => {}
+            Err(udp::RecvError::Exhausted) => {}
             r => {
-                let (size, endpoint) = r.map_err(map_err)?;
+                let (size, metadata) = r.map_err(map_err)?;
                 self.reactor.notify();
-                return Poll::Ready(Ok((size, ep2sa(&endpoint))));
+                return Poll::Ready(Ok((size, ep2sa(&metadata.endpoint))));
             }
         }
 
@@ -333,11 +335,11 @@ impl RawSocket {
     }
     /// Note that on multiple calls to a poll_* method in the send direction, only the Waker from the Context passed to the most recent call will be scheduled to receive a wakeup.
     pub fn poll_send(&self, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
-        let mut socket = self.reactor.get_socket::<socket::RawSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<raw::Socket>(*self.handle);
 
         match socket.send_slice(buf) {
             // the buffer is full
-            Err(smoltcp::Error::Truncated) | Err(smoltcp::Error::Exhausted) => {}
+            Err(raw::SendError::BufferFull) => {}
             r => {
                 r.map_err(map_err)?;
                 self.reactor.notify();
@@ -354,11 +356,11 @@ impl RawSocket {
     }
     /// Note that on multiple calls to a poll_* method in the recv direction, only the Waker from the Context passed to the most recent call will be scheduled to receive a wakeup.
     pub fn poll_recv(&self, cx: &mut Context<'_>, buf: &mut [u8]) -> Poll<io::Result<usize>> {
-        let mut socket = self.reactor.get_socket::<socket::RawSocket>(*self.handle);
+        let mut socket = self.reactor.get_socket::<raw::Socket>(*self.handle);
 
         match socket.recv_slice(buf) {
             // the buffer is empty
-            Err(smoltcp::Error::Exhausted) => {}
+            Err(raw::RecvError::Exhausted) => {}
             r => {
                 let size = r.map_err(map_err)?;
                 return Poll::Ready(Ok(size));
