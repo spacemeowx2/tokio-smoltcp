@@ -1,3 +1,8 @@
+# 0.4.0
+
+- Upgrade `smoltcp` to `0.10.0`
+- Remove neighbor cache filling at initialization (smoltcp removed the feature)
+
 # 0.3.1
 
 - fix: the fields of Neighbor should be public
