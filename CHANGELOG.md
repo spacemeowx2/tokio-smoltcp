@@ -1,3 +1,7 @@
+# 0.4.1
+
+- Add `set_any_ip` and `any_ip`
+
 # 0.4.0
 
 - Upgrade `smoltcp` to `0.10.0`

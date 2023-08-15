@@ -171,6 +171,21 @@ impl Net {
         addr
     }
 
+    /// Enable or disable the AnyIP capability.
+    pub fn set_any_ip(&self, any_ip: bool) {
+        let iface = self.reactor.iface().clone();
+        let mut iface: parking_lot::lock_api::MutexGuard<'_, parking_lot::RawMutex, Interface> =
+            iface.lock();
+        iface.set_any_ip(any_ip);
+    }
+
+    /// Get whether AnyIP is enabled.
+    pub fn any_ip(&self) -> bool {
+        let iface = self.reactor.iface().clone();
+        let iface = iface.lock();
+        iface.any_ip()
+    }
+
     pub fn routes<F: FnOnce(&Routes)>(&self, f: F) {
         let iface = self.reactor.iface().clone();
         let iface = iface.lock();
