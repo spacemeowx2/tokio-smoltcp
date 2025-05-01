@@ -1,7 +1,7 @@
 use super::{reactor::Reactor, socket_allocator::SocketHandle};
 use futures::future::{self, poll_fn};
 use futures::{ready, Stream};
-pub use smoltcp::socket::{raw, tcp, udp, AnySocket, Socket};
+pub use smoltcp::socket::{raw, tcp, udp};
 use smoltcp::wire::{IpAddress, IpEndpoint, IpProtocol, IpVersion};
 use std::mem::replace;
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
