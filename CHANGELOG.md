@@ -1,3 +1,7 @@
+# 0.5.0
+
+- Update dependencies to latest versions (smoltcp v0.12)
+
 # 0.4.1
 
 - Add `set_any_ip` and `any_ip`
