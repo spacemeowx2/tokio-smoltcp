@@ -1,3 +1,7 @@
+# 0.5.1
+
+- Fix dead-lock in TcpStream::connect
+
 # 0.5.0
 
 - Update dependencies to latest versions (smoltcp v0.12)

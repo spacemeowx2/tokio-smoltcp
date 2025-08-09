@@ -1,6 +1,6 @@
 [package]
 name = "tokio-smoltcp"
-version = "0.5.0"
+version = "0.5.1"
 authors = ["spacemeowx2 <spacemeowx2@gmail.com>"]
 edition = "2024"
 description = "An asynchronous wrapper for smoltcp."
