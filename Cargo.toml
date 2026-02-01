@@ -34,7 +34,7 @@ features = [
 [dev-dependencies]
 tokio = { version = "1", features = ["full"] }
 anyhow = "1.0"
-pcap = "1.0.0"
+pcap = "2.4.0"
 structopt = "0.3"
 dns-parser = "0.8"
 rand = "0.9"

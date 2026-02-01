@@ -35,7 +35,7 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
 
     fn map_err(e: pcap::Error) -> io::Error {
         match e {
-            pcap::Error::IoError(e) => e.into(),
+            pcap::Error::IoError(e) => io::Error::from(e),
             pcap::Error::TimeoutExpired => io::ErrorKind::WouldBlock.into(),
             other => io::Error::new(io::ErrorKind::Other, other),
         }
