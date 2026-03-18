@@ -185,31 +185,20 @@ impl Net {
 
     /// Enable or disable the AnyIP capability.
     pub fn set_any_ip(&self, any_ip: bool) {
-        let iface = self.reactor.iface().clone();
-        let mut iface: parking_lot::lock_api::MutexGuard<'_, parking_lot::RawMutex, Interface> =
-            iface.lock();
-        iface.set_any_ip(any_ip);
+        self.reactor.with_iface(|iface| iface.set_any_ip(any_ip));
     }
 
     /// Get whether AnyIP is enabled.
     pub fn any_ip(&self) -> bool {
-        let iface = self.reactor.iface().clone();
-        let iface = iface.lock();
-        iface.any_ip()
+        self.reactor.with_iface(|iface| iface.any_ip())
     }
 
     pub fn routes<F: FnOnce(&Routes)>(&self, f: F) {
-        let iface = self.reactor.iface().clone();
-        let iface = iface.lock();
-        let routes = iface.routes();
-        f(routes)
+        self.reactor.with_iface(|iface| f(iface.routes()));
     }
 
     pub fn routes_mut<F: FnOnce(&mut Routes)>(&self, f: F) {
-        let iface = self.reactor.iface().clone();
-        let mut iface = iface.lock();
-        let routes = iface.routes_mut();
-        f(routes)
+        self.reactor.with_iface(|iface| f(iface.routes_mut()));
     }
 }
 
@@ -223,10 +212,7 @@ impl Drop for Net {
 mod tests {
     use super::*;
     use futures::{Sink, SinkExt, Stream};
-    use smoltcp::{
-        phy::{DeviceCapabilities, Medium},
-        socket::Socket,
-    };
+    use smoltcp::phy::{DeviceCapabilities, Medium};
     use std::{
         io,
         pin::Pin,
@@ -353,7 +339,8 @@ mod tests {
 
     #[tokio::test]
     async fn tcp_bind_keeps_unspecified_addr_for_wildcard_bind() {
-        let (net, _fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
+        let (net, fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
+        tokio::spawn(fut);
 
         let listener = net.tcp_bind("0.0.0.0:12345".parse().unwrap()).await.unwrap();
 
@@ -365,7 +352,8 @@ mod tests {
 
     #[tokio::test]
     async fn udp_bind_keeps_unspecified_addr_for_wildcard_bind() {
-        let (net, _fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
+        let (net, fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
+        tokio::spawn(fut);
 
         let socket = net.udp_bind("0.0.0.0:12345".parse().unwrap()).await.unwrap();
 
@@ -375,25 +363,41 @@ mod tests {
         );
     }
 
+    #[test]
+    fn any_ip_round_trips_through_public_api() {
+        let (net, _fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
+
+        assert!(!net.any_ip());
+        net.set_any_ip(true);
+        assert!(net.any_ip());
+        net.set_any_ip(false);
+        assert!(!net.any_ip());
+    }
+
+    #[tokio::test]
+    async fn bind_with_port_zero_allocates_an_ephemeral_port() {
+        let (net, fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
+        tokio::spawn(fut);
+
+        let tcp = net.tcp_bind("0.0.0.0:0".parse().unwrap()).await.unwrap();
+        let udp = net.udp_bind("0.0.0.0:0".parse().unwrap()).await.unwrap();
+
+        assert_ne!(tcp.local_addr().unwrap().port(), 0);
+        assert_ne!(udp.local_addr().unwrap().port(), 0);
+    }
+
     #[tokio::test]
     async fn tcp_connect_returns_error_when_socket_closes_during_handshake() {
-        let (net, _fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
+        let (net, fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
+        tokio::spawn(fut);
         let mut connect = Box::pin(net.tcp_connect("10.0.0.2:80".parse().unwrap()));
 
         assert!(matches!(futures::poll!(&mut connect), Poll::Pending));
 
-        {
-            let mut sockets = net.reactor.socket_allocator().sockets().lock();
-            let mut closed = false;
-            for (_, socket) in sockets.iter_mut() {
-                if let Socket::Tcp(tcp) = socket {
-                    tcp.close();
-                    closed = true;
-                    break;
-                }
-            }
-            assert!(closed, "test setup should create exactly one tcp socket");
-        }
+        assert!(
+            net.reactor.close_first_tcp_socket_for_test().await,
+            "test setup should create exactly one tcp socket",
+        );
 
         let result = tokio::time::timeout(StdDuration::from_millis(50), &mut connect).await;
         let connect_result = result.expect("connect future should resolve after the socket closes");
