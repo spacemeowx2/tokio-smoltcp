@@ -7,7 +7,7 @@ use smoltcp::{
 };
 use structopt::StructOpt;
 use tokio::io::{copy, split, AsyncReadExt, AsyncWriteExt};
-use tokio_smoltcp::{device::AsyncDevice, smoltcp::iface, Net, NetConfig};
+use tokio_smoltcp::{device::AsyncDevice, smoltcp::iface, Net, NetConfig, TcpConnectOptions};
 
 #[derive(Debug, StructOpt)]
 struct Opt {
@@ -178,7 +178,8 @@ async fn async_main(opt: Opt) -> Result<()> {
         .expect("No A record in response");
 
     println!("Connecting www.baidu.com");
-    let mut tcp = net.tcp_connect((dst_ip, 80).into()).await?;
+    let options = TcpConnectOptions::default().with_source_port(20000);
+    let mut tcp = net.tcp_connect_with_options((dst_ip, 80).into(), options).await?;
     println!("Connected");
 
     tcp.write_all(b"GET / HTTP/1.0\r\nHost: www.baidu.com\r\n\r\n")
