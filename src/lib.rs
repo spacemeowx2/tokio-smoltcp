@@ -61,6 +61,21 @@ impl NetConfig {
     }
 }
 
+/// A config for creating a `TcpStream`
+///
+/// This is used to configure the `TcpStream`
+#[derive(Default)]
+pub struct TcpConnectOptions {
+    source_port: Option<u16>
+}
+
+impl TcpConnectOptions {
+    pub fn with_source_port(mut self, source_port: u16) -> TcpConnectOptions {
+        self.source_port = Some(source_port);
+        self
+    }
+}
+
 /// `Net` is the main interface to the network stack.
 /// Socket creation and configuration is done through the `Net` interface.
 ///
@@ -138,13 +153,24 @@ impl Net {
 
     /// Opens a TCP connection to a remote host.
     pub async fn tcp_connect(&self, addr: SocketAddr) -> io::Result<TcpStream> {
+        self.tcp_connect_with_options(addr, TcpConnectOptions::default())
+            .await
+    }
+
+    pub async fn tcp_connect_with_options(
+        &self,
+        addr: SocketAddr,
+        options: TcpConnectOptions,
+    ) -> io::Result<TcpStream> {
+        let port = options.source_port.unwrap_or(self.get_port());
         TcpStream::connect(
             self.reactor.clone(),
-            (self.ip_addr.address(), self.get_port()).into(),
+            (self.ip_addr.address(), port).into(),
             addr.into(),
         )
         .await
     }
+
     pub fn tcp_connect_lazy(
         &self,
         addr: SocketAddr,
@@ -152,7 +178,19 @@ impl Net {
         SocketAddr,
         impl Future<Output = Result<TcpStream, std::io::Error>>,
     ) {
-        let local_endpoint: SocketAddr = (self.ip_addr.address(), self.get_port()).into();
+        self.tcp_connect_lazy_with_options(addr, TcpConnectOptions::default())
+    }
+
+    pub fn tcp_connect_lazy_with_options(
+        &self,
+        addr: SocketAddr,
+        options: TcpConnectOptions,
+    ) -> (
+        SocketAddr,
+        impl Future<Output = Result<TcpStream, std::io::Error>>,
+    ) {
+        let port = options.source_port.unwrap_or(self.get_port());
+        let local_endpoint: SocketAddr = (self.ip_addr.address(), port).into();
         let future = TcpStream::connect(self.reactor.clone(), local_endpoint.into(), addr.into());
         (local_endpoint, future)
     }
