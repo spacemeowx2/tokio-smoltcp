@@ -1,13 +1,13 @@
-use futures::{ready, Sink, Stream};
+use futures::{Sink, Stream, ready};
 use pin_project_lite::pin_project;
 use smoltcp::phy::DeviceCapabilities;
 use std::{
     io,
-    os::unix::io::{AsRawFd, RawFd},
+    os::fd::{AsFd, OwnedFd},
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::io::{unix::AsyncFd, Interest};
+use tokio::io::{Interest, unix::AsyncFd};
 
 use crate::device::AsyncDevice;
 
@@ -18,7 +18,7 @@ pin_project! {
         obj: T,
         recv: R,
         send: S,
-        async_fd: AsyncFd<RawFd>,
+        async_fd: AsyncFd<OwnedFd>,
         temp: Option<Vec<u8>>,
         poll_write: bool,
         caps: DeviceCapabilities,
@@ -27,7 +27,7 @@ pin_project! {
 
 impl<T, R, S> AsyncCapture<T, R, S>
 where
-    T: AsRawFd,
+    T: AsFd,
     R: Fn(&mut T) -> io::Result<Vec<u8>>,
     S: Fn(&mut T, &[u8]) -> io::Result<()>,
 {
@@ -35,7 +35,7 @@ where
     /// functions.
     ///
     ///
-    /// The `obj` is used to get the raw file descriptor.
+    /// The object must implement `AsFd`; a duplicate descriptor is owned until deregistration.
     ///
     ///
     /// The `recv` and `send` functions are used to read and write packets. They should
@@ -44,7 +44,13 @@ where
     ///
     /// The `caps` is used to determine the device capabilities. `DeviceCapabilities::max_transmission_unit` must be set.
     pub fn new(obj: T, recv: R, send: S, caps: DeviceCapabilities) -> io::Result<Self> {
-        Self::new_with_interest(obj, recv, send, caps, Interest::READABLE | Interest::WRITABLE)
+        Self::new_with_interest(
+            obj,
+            recv,
+            send,
+            caps,
+            Interest::READABLE | Interest::WRITABLE,
+        )
     }
 
     /// Make a new `AsyncCapture` with an explicit readiness interest.
@@ -55,10 +61,9 @@ where
         caps: DeviceCapabilities,
         interest: Interest,
     ) -> io::Result<Self> {
-        let async_fd = AsyncFd::with_interest(
-            obj.as_raw_fd(),
-            interest,
-        )?;
+        let fd = obj.as_fd().try_clone_to_owned()?;
+        // SAFETY: AsyncFd owns this duplicate, which callbacks cannot close or replace.
+        let async_fd = unsafe { AsyncFd::register_with_interest(fd, interest) }?;
         Ok(AsyncCapture {
             obj,
             recv,
@@ -73,7 +78,7 @@ where
 
 impl<T, R, S> Stream for AsyncCapture<T, R, S>
 where
-    T: AsRawFd + Send,
+    T: AsFd + Send,
     R: Fn(&mut T) -> io::Result<Vec<u8>> + Send,
     S: Fn(&mut T, &[u8]) -> io::Result<()> + Send,
 {
@@ -97,7 +102,7 @@ where
 
 impl<T, R, S> Sink<Vec<u8>> for AsyncCapture<T, R, S>
 where
-    T: AsRawFd + Send,
+    T: AsFd + Send,
     R: Fn(&mut T) -> io::Result<Vec<u8>> + Send,
     S: Fn(&mut T, &[u8]) -> io::Result<()> + Send,
 {
@@ -168,11 +173,75 @@ where
 
 impl<T, R, S> AsyncDevice for AsyncCapture<T, R, S>
 where
-    T: AsRawFd + Send,
+    T: AsFd + Send,
     R: Fn(&mut T) -> io::Result<Vec<u8>> + Send,
     S: Fn(&mut T, &[u8]) -> io::Result<()> + Send,
 {
     fn capabilities(&self) -> &DeviceCapabilities {
         &self.caps
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use futures::StreamExt;
+    use std::{
+        io::{Read, Write},
+        os::unix::net::UnixStream,
+        time::Duration,
+    };
+
+    #[tokio::test]
+    async fn read_only_capture_wakes_on_incoming_data() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        let mut capture = AsyncCapture::new_with_interest(
+            stream,
+            |stream| {
+                let mut packet = vec![0; 16];
+                let len = stream.read(&mut packet)?;
+                packet.truncate(len);
+                Ok(packet)
+            },
+            |stream, packet| stream.write_all(packet),
+            DeviceCapabilities::default(),
+            Interest::READABLE,
+        )
+        .unwrap();
+
+        let mut receive = Box::pin(capture.next());
+        assert!(matches!(futures::poll!(&mut receive), Poll::Pending));
+        peer.write_all(b"ready").unwrap();
+        let packet = tokio::time::timeout(Duration::from_secs(1), receive)
+            .await
+            .unwrap()
+            .unwrap()
+            .unwrap();
+        assert_eq!(packet, b"ready");
+    }
+
+    #[tokio::test]
+    async fn registration_owns_fd_until_capture_is_dropped() {
+        let (stream, mut peer) = UnixStream::pair().unwrap();
+        stream.set_nonblocking(true).unwrap();
+        peer.set_nonblocking(true).unwrap();
+        let mut capture = AsyncCapture::new(
+            stream,
+            |_| Err(io::ErrorKind::WouldBlock.into()),
+            |_, _| Ok(()),
+            DeviceCapabilities::default(),
+        )
+        .unwrap();
+
+        // Callbacks can replace the original object; registration must keep its FD alive.
+        let (replacement, _peer) = UnixStream::pair().unwrap();
+        capture.obj = replacement;
+        assert_eq!(
+            peer.read(&mut [0]).unwrap_err().kind(),
+            io::ErrorKind::WouldBlock
+        );
+        drop(capture);
+        assert_eq!(peer.read(&mut [0]).unwrap(), 0);
     }
 }

@@ -2,9 +2,8 @@ use super::{reactor::Reactor, socket_allocator::SocketHandle};
 use futures::future::{self, poll_fn};
 use futures::{Stream, ready};
 pub use smoltcp::socket::{raw, tcp, udp};
-use smoltcp::wire::{IpAddress, IpEndpoint, IpListenEndpoint, IpProtocol, IpVersion};
+use smoltcp::wire::{IpEndpoint, IpListenEndpoint, IpProtocol, IpVersion};
 use std::mem::replace;
-use std::net::{IpAddr, Ipv4Addr, Ipv6Addr};
 use std::{
     io,
     net::SocketAddr,
@@ -24,7 +23,7 @@ pub struct TcpListener {
 }
 
 fn map_err<E: std::error::Error>(e: E) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e.to_string())
+    io::Error::other(e.to_string())
 }
 
 impl TcpListener {
@@ -80,15 +79,13 @@ impl Stream for Incoming {
 }
 
 fn ep2sa(ep: &IpEndpoint) -> SocketAddr {
-    match ep.addr {
-        IpAddress::Ipv4(v4) => SocketAddr::new(IpAddr::V4(Ipv4Addr::from(v4)), ep.port),
-        IpAddress::Ipv6(v6) => SocketAddr::new(IpAddr::V6(Ipv6Addr::from(v6)), ep.port),
-        #[allow(unreachable_patterns)]
-        _ => unreachable!(),
-    }
+    (*ep).into()
 }
 
 /// A TCP stream between a local and a remote socket.
+///
+/// Flushing waits for the peer to acknowledge all queued data, and returns an
+/// error if the connection closes with data still unacknowledged.
 pub struct TcpStream {
     handle: SocketHandle,
     reactor: Arc<Reactor>,
@@ -226,6 +223,9 @@ impl AsyncWrite for TcpStream {
         let mut socket = self.reactor.get_socket::<tcp::Socket>(*self.handle);
         if socket.send_queue() == 0 {
             return Poll::Ready(Ok(()));
+        }
+        if socket.state() == tcp::State::Closed {
+            return Poll::Ready(Err(io::ErrorKind::BrokenPipe.into()));
         }
         socket.register_send_waker(cx.waker());
         Poll::Pending

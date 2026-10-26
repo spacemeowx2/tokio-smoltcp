@@ -5,7 +5,7 @@ use std::{
     pin::Pin,
     task::{Context, Poll},
 };
-use tokio::sync::mpsc::{channel, Receiver, Sender};
+use tokio::sync::mpsc::{Receiver, Sender, channel};
 use tokio_util::sync::{PollSendError, PollSender};
 
 use crate::device::AsyncDevice;
@@ -53,7 +53,7 @@ impl Stream for ChannelCapture {
 }
 
 fn map_err(e: PollSendError<Vec<u8>>) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e)
+    io::Error::other(e)
 }
 
 impl Sink<Vec<u8>> for ChannelCapture {

@@ -1,4 +1,4 @@
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result, anyhow};
 use dns_parser::QueryType;
 use pcap::Device;
 use smoltcp::{
@@ -6,12 +6,15 @@ use smoltcp::{
     wire::{EthernetAddress, IpAddress, IpCidr},
 };
 use structopt::StructOpt;
-use tokio::io::{copy, split, AsyncReadExt, AsyncWriteExt};
-use tokio_smoltcp::{device::AsyncDevice, smoltcp::iface, Net, NetConfig, TcpConnectOptions};
+use tokio::io::{AsyncReadExt, AsyncWriteExt, copy, split};
+use tokio_smoltcp::{Net, NetConfig, TcpConnectOptions, device::AsyncDevice, smoltcp::iface};
 
 #[derive(Debug, StructOpt)]
 struct Opt {
     device: String,
+    /// Verify DNS, HTTP, flush and shutdown, then exit within 30 seconds.
+    #[structopt(long)]
+    smoke: bool,
     #[structopt(short, long, default_value = "00:01:02:03:04:05")]
     ethernet_addr: String,
     #[structopt(short, long, default_value = "172.19.44.33/20")]
@@ -22,12 +25,12 @@ struct Opt {
 
 #[cfg(unix)]
 fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
+    use pcap::{Active, Capture};
     use std::{
         ffi::c_void,
         io,
-        os::unix::io::{AsRawFd, RawFd},
+        os::fd::{AsFd, BorrowedFd, RawFd},
     };
-    use pcap::{Active, Capture};
     use tokio::io::Interest;
     use tokio_smoltcp::device::AsyncCapture;
 
@@ -41,9 +44,10 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
         fd: RawFd,
     }
 
-    impl AsRawFd for SelectableCapture {
-        fn as_raw_fd(&self) -> RawFd {
-            self.fd
+    impl AsFd for SelectableCapture {
+        fn as_fd(&self) -> BorrowedFd<'_> {
+            // SAFETY: cap owns the validated selectable descriptor for this borrow.
+            unsafe { BorrowedFd::borrow_raw(self.fd) }
         }
     }
 
@@ -59,7 +63,7 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
         match e {
             pcap::Error::IoError(e) => e.into(),
             pcap::Error::TimeoutExpired => io::ErrorKind::WouldBlock.into(),
-            other => io::Error::new(io::ErrorKind::Other, other),
+            other => io::Error::other(other),
         }
     }
 
@@ -74,7 +78,7 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
     caps.max_burst_size = Some(100);
     caps.max_transmission_unit = 1500;
 
-    Ok(AsyncCapture::new_with_interest(
+    AsyncCapture::new_with_interest(
         cap,
         |d| {
             let r = d.cap.next_packet().map_err(map_err).map(|p| p.to_vec());
@@ -89,7 +93,7 @@ fn get_by_device(device: Device) -> Result<impl AsyncDevice> {
         caps,
         Interest::READABLE,
     )
-    .context("Failed to create async capture with selectable fd")?)
+    .context("Failed to create async capture with selectable fd")
 }
 
 #[cfg(windows)]
@@ -179,15 +183,32 @@ async fn async_main(opt: Opt) -> Result<()> {
 
     println!("Connecting www.baidu.com");
     let options = TcpConnectOptions::default().with_source_port(20000);
-    let mut tcp = net.tcp_connect_with_options((dst_ip, 80).into(), options).await?;
+    let mut tcp = net
+        .tcp_connect_with_options((dst_ip, 80).into(), options)
+        .await?;
     println!("Connected");
 
     tcp.write_all(b"GET / HTTP/1.0\r\nHost: www.baidu.com\r\n\r\n")
         .await?;
+    tcp.flush().await?;
     println!("Sent");
 
     let mut string = String::new();
     tcp.read_to_string(&mut string).await?;
+    if opt.smoke {
+        anyhow::ensure!(
+            string.starts_with("HTTP/1.0 200 ") || string.starts_with("HTTP/1.1 200 "),
+            "expected a successful HTTP response"
+        );
+        println!(
+            "HTTP response: {} bytes, {}",
+            string.len(),
+            string.lines().next().unwrap()
+        );
+        tcp.shutdown().await?;
+        println!("PASS: DNS, TCP source port 20000, HTTP 200, flush, EOF and shutdown");
+        return Ok(());
+    }
     println!("read {}", string);
 
     let mut listener = net.tcp_bind("0.0.0.0:12345".parse()?).await?;
@@ -206,8 +227,11 @@ async fn async_main(opt: Opt) -> Result<()> {
 #[tokio::main]
 async fn main() -> Result<()> {
     let opt = Opt::from_args();
-    if let Err(e) = async_main(opt).await {
-        eprintln!("Error {:?}", e);
+    if opt.smoke {
+        tokio::time::timeout(std::time::Duration::from_secs(30), async_main(opt))
+            .await
+            .context("real-interface smoke timed out")?
+    } else {
+        async_main(opt).await
     }
-    Ok(())
 }

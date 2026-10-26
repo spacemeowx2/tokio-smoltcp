@@ -19,3 +19,8 @@ This example uses [`pcap`](https://crates.io/crates/pcap) as backend and do the 
 1. Bind a UDP port and send a DNS request to `114.114.114.114:53` and get the `www.baidu.com`'s IP.
 2. Create a `TcpStream` and send a simple HTTP/1.0 request, then print the HTTP response.
 3. Create a echo server listening to `0.0.0.0:12345`, accept incoming connections and send the data back.
+
+Add `--smoke` to verify DNS, HTTP, TCP flush and shutdown on the selected interface,
+then exit instead of starting the echo server. The smoke run fails after 30 seconds
+and returns a nonzero exit status on failure. Supply the interface's MAC address,
+an unused local IP/subnet and the gateway with the existing command-line options.

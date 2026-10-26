@@ -78,9 +78,7 @@ impl SocketAlloctor {
     fn alloc_tcp_socket(&self) -> tcp::Socket<'static> {
         let rx_buffer = tcp::SocketBuffer::new(vec![0; self.buffer_size.tcp_rx_size]);
         let tx_buffer = tcp::SocketBuffer::new(vec![0; self.buffer_size.tcp_tx_size]);
-        let tcp = tcp::Socket::new(rx_buffer, tx_buffer);
-
-        tcp
+        tcp::Socket::new(rx_buffer, tx_buffer)
     }
     fn alloc_udp_socket(&self) -> udp::Socket<'static> {
         let rx_buffer = udp::PacketBuffer::new(
@@ -91,9 +89,7 @@ impl SocketAlloctor {
             vec![udp::PacketMetadata::EMPTY; self.buffer_size.udp_tx_meta_size],
             vec![0; self.buffer_size.udp_tx_size],
         );
-        let udp = udp::Socket::new(rx_buffer, tx_buffer);
-
-        udp
+        udp::Socket::new(rx_buffer, tx_buffer)
     }
     fn alloc_raw_socket(
         &self,
@@ -108,9 +104,7 @@ impl SocketAlloctor {
             vec![raw::PacketMetadata::EMPTY; self.buffer_size.raw_tx_meta_size],
             vec![0; self.buffer_size.raw_tx_size],
         );
-        let raw = raw::Socket::new(Some(ip_version), Some(ip_protocol), rx_buffer, tx_buffer);
-
-        raw
+        raw::Socket::new(Some(ip_version), Some(ip_protocol), rx_buffer, tx_buffer)
     }
 }
 

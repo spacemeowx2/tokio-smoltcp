@@ -31,7 +31,7 @@ mod socket_allocator;
 /// Can be used to create a forever timestamp in neighbor.
 // The 60_000 is the same as NeighborCache::ENTRY_LIFETIME.
 pub const FOREVER: Instant =
-    Instant::from_micros_const(i64::max_value() - Duration::from_millis(60_000).micros() as i64);
+    Instant::from_micros_const(i64::MAX - Duration::from_millis(60_000).micros() as i64);
 
 pub struct Neighbor {
     pub protocol_addr: IpAddress,
@@ -66,7 +66,7 @@ impl NetConfig {
 /// This is used to configure the `TcpStream`
 #[derive(Default)]
 pub struct TcpConnectOptions {
-    source_port: Option<u16>
+    source_port: Option<u16>,
 }
 
 impl TcpConnectOptions {
@@ -139,10 +139,9 @@ impl Net {
     }
     fn get_port(&self) -> u16 {
         self.from_port
-            .fetch_update(Ordering::SeqCst, Ordering::SeqCst, |x| {
-                Some(if x > 60000 { 10000 } else { x + 1 })
+            .update(Ordering::SeqCst, Ordering::SeqCst, |x| {
+                if x > 60000 { 10000 } else { x + 1 }
             })
-            .unwrap()
     }
 
     /// Creates a new TcpListener, which will be bound to the specified address.
@@ -253,7 +252,7 @@ impl Net {
 
 impl Drop for Net {
     fn drop(&mut self) {
-        self.stopper.notify_waiters()
+        self.stopper.notify_one()
     }
 }
 
@@ -393,7 +392,10 @@ mod tests {
     async fn tcp_bind_keeps_unspecified_addr_for_wildcard_bind() {
         let (net, _fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
 
-        let listener = net.tcp_bind("0.0.0.0:12345".parse().unwrap()).await.unwrap();
+        let listener = net
+            .tcp_bind("0.0.0.0:12345".parse().unwrap())
+            .await
+            .unwrap();
 
         assert!(
             listener.local_addr().unwrap().ip().is_unspecified(),
@@ -405,7 +407,10 @@ mod tests {
     async fn udp_bind_keeps_unspecified_addr_for_wildcard_bind() {
         let (net, _fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
 
-        let socket = net.udp_bind("0.0.0.0:12345".parse().unwrap()).await.unwrap();
+        let socket = net
+            .udp_bind("0.0.0.0:12345".parse().unwrap())
+            .await
+            .unwrap();
 
         assert!(
             socket.local_addr().unwrap().ip().is_unspecified(),
@@ -451,6 +456,146 @@ mod tests {
             matches!(result, Ok(Ok(()))),
             "reactor should terminate cleanly when the device stream ends, got {result:?}",
         );
+    }
+
+    #[tokio::test]
+    async fn reactor_stops_when_net_is_dropped_before_start() {
+        let (net, fut) = Net::new2(PendingDevice { caps: ip_caps() }, test_config());
+        drop(net);
+
+        let result = tokio::time::timeout(StdDuration::from_millis(50), fut).await;
+        assert!(
+            matches!(result, Ok(Ok(()))),
+            "stop request was lost: {result:?}"
+        );
+    }
+
+    #[cfg(unix)]
+    fn local_net_pair() -> (Net, Net) {
+        use crate::device::AsyncCapture;
+        use std::os::unix::net::UnixDatagram;
+
+        let (left, right) = UnixDatagram::pair().unwrap();
+        let make_net = |socket: UnixDatagram, address| {
+            socket.set_nonblocking(true).unwrap();
+            let capture = AsyncCapture::new(
+                socket,
+                |socket| {
+                    let mut packet = vec![0; 1500];
+                    let len = socket.recv(&mut packet)?;
+                    packet.truncate(len);
+                    Ok(packet)
+                },
+                |socket, packet| socket.send(packet).map(|_| ()),
+                ip_caps(),
+            )
+            .unwrap();
+            let mut config = test_config();
+            config.ip_addr = IpCidr::new(address, 24);
+            Net::new(capture, config)
+        };
+        (
+            make_net(left, IpAddress::v4(10, 0, 0, 1)),
+            make_net(right, IpAddress::v4(10, 0, 0, 2)),
+        )
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn tcp_flush_returns_error_after_connection_aborts() {
+        use tokio::io::AsyncWriteExt;
+
+        tokio::time::timeout(StdDuration::from_secs(2), async {
+            let (client_net, server_net) = local_net_pair();
+            let address = "10.0.0.2:12345".parse().unwrap();
+            let mut listener = server_net.tcp_bind(address).await.unwrap();
+            let (client, server) = tokio::join!(client_net.tcp_connect(address), listener.accept());
+            let mut client = client.unwrap();
+            let (_server, _) = server.unwrap();
+
+            client.write_all(b"unacknowledged").await.unwrap();
+            let mut flush = Box::pin(client.flush());
+            assert!(matches!(futures::poll!(&mut flush), Poll::Pending));
+            {
+                let mut sockets = client_net.reactor.socket_allocator().sockets().lock();
+                for (_, socket) in sockets.iter_mut() {
+                    if let Socket::Tcp(tcp) = socket {
+                        assert!(tcp.send_queue() > 0);
+                        tcp.abort();
+                    }
+                }
+            }
+            let error = flush.await.expect_err("aborted writes must fail");
+            assert_eq!(error.kind(), io::ErrorKind::BrokenPipe);
+        })
+        .await
+        .expect("flush must not hang after an abort");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn local_tcp_udp_smoke() {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+        tokio::time::timeout(StdDuration::from_secs(10), async {
+            let (client_net, server_net) = local_net_pair();
+            let address = "10.0.0.2:12345".parse().unwrap();
+            let mut listener = server_net.tcp_bind(address).await.unwrap();
+            let options = TcpConnectOptions::default().with_source_port(23456);
+            let (client, server) = tokio::join!(
+                client_net.tcp_connect_with_options(address, options),
+                listener.accept(),
+            );
+            let mut client = client.unwrap();
+            let (mut server, peer) = server.unwrap();
+            assert_eq!(client.local_addr().unwrap().port(), 23456);
+            assert_eq!(peer.port(), 23456);
+
+            client.write_all(b"small write").await.unwrap();
+            let mut received = [0; 11];
+            server.read_exact(&mut received).await.unwrap();
+            assert_eq!(&received, b"small write");
+            client.flush().await.unwrap();
+
+            let (mut app, mut relay_io) = tokio::io::duplex(8192);
+            let relay = tokio::spawn(async move {
+                tokio::io::copy_bidirectional(&mut server, &mut relay_io).await
+            });
+            let payload: Vec<u8> = (0..65536).map(|i| i as u8).collect();
+            let mut received = vec![0; payload.len()];
+            let (write, read) =
+                tokio::join!(client.write_all(&payload), app.read_exact(&mut received));
+            write.unwrap();
+            read.unwrap();
+            assert_eq!(received, payload);
+            client.flush().await.unwrap();
+            let (write, read) =
+                tokio::join!(app.write_all(&payload), client.read_exact(&mut received));
+            write.unwrap();
+            read.unwrap();
+            assert_eq!(received, payload);
+            relay.abort();
+            assert!(relay.await.unwrap_err().is_cancelled());
+
+            let client = client_net
+                .udp_bind("10.0.0.1:23457".parse().unwrap())
+                .await
+                .unwrap();
+            let server = server_net.udp_bind(address).await.unwrap();
+            let mut received = [0; 32];
+            for sequence in 0u32..100 {
+                let payload = sequence.to_be_bytes();
+                client.send_to(&payload, address).await.unwrap();
+                let (len, peer) = server.recv_from(&mut received).await.unwrap();
+                assert_eq!(&received[..len], &payload);
+                server.send_to(&received[..len], peer).await.unwrap();
+                let (len, peer) = client.recv_from(&mut received).await.unwrap();
+                assert_eq!(&received[..len], &payload);
+                assert_eq!(peer, address);
+            }
+        })
+        .await
+        .expect("local TCP/UDP smoke timed out");
     }
 
     #[cfg(unix)]

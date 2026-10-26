@@ -48,13 +48,11 @@ pub struct BufferDevice {
 pub struct BufferRxToken(Packet);
 
 impl RxToken for BufferRxToken {
-    fn consume<R, F>(mut self, f: F) -> R
+    fn consume<R, F>(self, f: F) -> R
     where
         F: FnOnce(&[u8]) -> R,
     {
-        let p = &mut self.0;
-        let result = f(p);
-        result
+        f(&self.0)
     }
 }
 
@@ -76,16 +74,19 @@ impl<'d> TxToken for BufferTxToken<'d> {
 }
 
 impl Device for BufferDevice {
-    type RxToken<'a> = BufferRxToken
-        where Self:'a;
-    type TxToken<'a> = BufferTxToken<'a>
-        where Self:'a;
+    type RxToken<'a>
+        = BufferRxToken
+    where
+        Self: 'a;
+    type TxToken<'a>
+        = BufferTxToken<'a>
+    where
+        Self: 'a;
 
     fn receive(&mut self, _timestamp: Instant) -> Option<(Self::RxToken<'_>, Self::TxToken<'_>)> {
-        match self.recv_queue.pop_front() {
-            Some(p) => Some((BufferRxToken(p), BufferTxToken(self))),
-            None => None,
-        }
+        self.recv_queue
+            .pop_front()
+            .map(|p| (BufferRxToken(p), BufferTxToken(self)))
     }
 
     fn transmit(&mut self, _timestamp: Instant) -> Option<Self::TxToken<'_>> {

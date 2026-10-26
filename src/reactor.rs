@@ -2,7 +2,7 @@ use crate::{
     device::{BufferDevice, Packet},
     socket_allocator::{BufferSize, SocketAlloctor},
 };
-use futures::{stream::iter, FutureExt, SinkExt, StreamExt};
+use futures::{FutureExt, SinkExt, StreamExt, stream::iter};
 use parking_lot::{MappedMutexGuard, Mutex, MutexGuard};
 use smoltcp::{
     iface::{Context, Interface, SocketHandle},
@@ -21,9 +21,7 @@ pub(crate) struct Reactor {
     socket_allocator: SocketAlloctor,
 }
 
-async fn receive(
-    async_iface: &mut impl crate::device::AsyncDevice,
- ) -> io::Result<Option<Packet>> {
+async fn receive(async_iface: &mut impl crate::device::AsyncDevice) -> io::Result<Option<Packet>> {
     match async_iface.next().await {
         Some(packet) => Ok(Some(packet?)),
         None => Ok(None),
@@ -51,9 +49,7 @@ async fn run(
         let mut stream_ended = false;
         let packets = device.take_send_queue();
 
-        async_iface
-            .send_all(&mut iter(packets).map(|p| Ok(p)))
-            .await?;
+        async_iface.send_all(&mut iter(packets).map(Ok)).await?;
 
         if recv_buf.is_empty() && device.need_wait() {
             let start = Instant::now();
@@ -153,7 +149,7 @@ impl Reactor {
         &self.socket_allocator
     }
     pub fn notify(&self) {
-        self.notify.notify_waiters();
+        self.notify.notify_one();
     }
     pub fn iface(&self) -> &BufferInterface {
         &self.iface
@@ -171,5 +167,36 @@ impl Drop for Reactor {
                 _ => {}
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use smoltcp::{
+        iface::Config,
+        phy::{DeviceCapabilities, Medium},
+        wire::HardwareAddress,
+    };
+
+    #[test]
+    fn notification_is_retained_until_reactor_waits() {
+        let mut caps = DeviceCapabilities::default();
+        caps.medium = Medium::Ip;
+        caps.max_transmission_unit = 1500;
+        let mut device = BufferDevice::new(caps);
+        let iface = Interface::new(
+            Config::new(HardwareAddress::Ip),
+            &mut device,
+            Instant::now(),
+        );
+        let reactor = Reactor {
+            notify: Arc::new(Notify::new()),
+            iface: Arc::new(Mutex::new(iface)),
+            socket_allocator: SocketAlloctor::new(BufferSize::default()),
+        };
+
+        reactor.notify();
+        assert!(reactor.notify.notified().now_or_never().is_some());
     }
 }

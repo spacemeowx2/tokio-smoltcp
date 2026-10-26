@@ -1,3 +1,13 @@
+# 0.7.0
+
+- Upgrade the re-exported `smoltcp` dependency to `0.14` (breaking dependency/API change).
+- Replace deprecated Tokio FD registration with an owned duplicate; `AsyncCapture` now requires `AsFd` instead of `AsRawFd`, and Tokio 1.53.3 or newer.
+- Replace deprecated atomic update APIs and require Rust 1.95 or newer.
+- Fix lost reactor wakeups and stop requests when `Net` is dropped before the reactor starts (#18).
+- Return an error from TCP flush if the connection closes with unacknowledged data (#19).
+- Add `TcpConnectOptions`, `tcp_connect_with_options` and `tcp_connect_lazy_with_options` to select a TCP source port (#16).
+- Add a bounded `pcap --smoke` example mode that checks DNS, HTTP, flush and TCP shutdown on a real network interface and exits with an error on failure.
+
 # 0.6.0
 
 - Upgrade `smoltcp` to `0.13`
